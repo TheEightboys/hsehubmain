@@ -1,0 +1,259 @@
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+import { User, Session } from "@supabase/supabase-js";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
+
+type UserRole = "super_admin" | "company_admin" | "employee";
+
+interface AuthContextType {
+  user: User | null;
+  session: Session | null;
+  userRole: UserRole | null;
+  companyId: string | null;
+  companyName: string | null;
+  loading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, fullName: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  refreshUserRole: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [userRole, setUserRole] = useState<UserRole | null>(null);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    console.log("[AuthContext] Initializing auth state...");
+    
+    // Set up auth state listener (robust unsubscribe and null checks)
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log(`[AuthContext] Auth state changed: ${event}`, {
+        hasUser: !!session?.user,
+        userEmail: session?.user?.email,
+      });
+      
+      setSession(session);
+      setUser(session?.user ?? null);
+
+      if (session?.user) {
+        // Fetch user role immediately on auth change
+        console.log("[AuthContext] User detected, fetching role...");
+        fetchUserRole(session.user.id, 0);
+      } else {
+        // No user: clear role/company and stop loading
+        console.log("[AuthContext] No user, clearing state");
+        setUserRole(null);
+        setCompanyId(null);
+        setLoading(false);
+      }
+    });
+
+    const subscription = data?.subscription;
+
+    // Check for existing session
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        console.log("[AuthContext] Initial session check:", {
+          hasSession: !!session,
+          userEmail: session?.user?.email,
+        });
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+
+        if (session?.user) {
+          fetchUserRole(session.user.id, 0);
+        } else {
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.error("[AuthContext] Error getting initial session:", err);
+        setLoading(false);
+      });
+
+    return () => {
+      try {
+        subscription?.unsubscribe?.();
+      } catch (e) {
+        // ignore
+      }
+    };
+  }, []);
+
+  const isMissingRpcError = (error: Record<string, any>) => {
+    if (!error) return false;
+    const code = String(error.code ?? "");
+    const message = String(error.message ?? "").toLowerCase();
+    const details = String(error.details ?? "").toLowerCase();
+    return (
+      code === "PGRST301" ||
+      message.includes("not found") ||
+      message.includes("does not exist") ||
+      details.includes("does not exist") ||
+      details.includes("not found")
+    );
+  };
+
+  const fetchCompanyContextViaTables = async (userId: string) => {
+    console.warn("[AuthContext] Falling back to direct company lookup");
+    const { data, error } = await supabase
+      .from("user_roles")
+      .select("role, company_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    setUserRole((data?.role as UserRole) ?? null);
+    setCompanyId(data?.company_id ?? null);
+    
+    // Fetch company name
+    if (data?.company_id) {
+      const { data: companyData } = await supabase
+        .from("companies")
+        .select("name")
+        .eq("id", data.company_id)
+        .single();
+      setCompanyName(companyData?.name ?? null);
+    }
+    
+    setLoading(false);
+  };
+
+  const fetchCompanyContextViaRpc = async () => {
+    const { data, error } = await supabase.rpc("get_company_context");
+
+    if (error) {
+      if (isMissingRpcError(error)) {
+        console.warn("[AuthContext] get_company_context RPC missing, using fallback");
+        return false;
+      }
+      console.error("[AuthContext] Error fetching company context via RPC:", error);
+      throw error;
+    }
+
+    if (data?.success) {
+      console.log("[AuthContext] Company context loaded via RPC", data);
+      setUserRole((data.role as UserRole) ?? "company_admin");
+      setCompanyId(data.company_id ?? null);
+      
+      // Fetch company name
+      if (data.company_id) {
+        const { data: companyData } = await supabase
+          .from("companies")
+          .select("name")
+          .eq("id", data.company_id)
+          .single();
+        setCompanyName(companyData?.name ?? null);
+      }
+      
+      setLoading(false);
+      return true;
+    }
+
+    return false;
+  };
+
+  const fetchUserRole = async (userId: string, retryCount = 0) => {
+    try {
+      console.log(`[AuthContext] Fetching user role for ${userId}, attempt ${retryCount + 1}`);
+
+      const rpcHandled = await fetchCompanyContextViaRpc();
+      if (rpcHandled) return;
+
+      await fetchCompanyContextViaTables(userId);
+    } catch (error) {
+      console.error("[AuthContext] Error fetching user role:", error);
+      if (retryCount < 3) {
+        setTimeout(() => fetchUserRole(userId, retryCount + 1), 1000);
+      } else {
+        setUserRole(null);
+        setCompanyId(null);
+        setLoading(false);
+      }
+    }
+  };
+
+  const signIn = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+  };
+
+  const signUp = async (email: string, password: string, fullName: string) => {
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+        },
+        emailRedirectTo: `${window.location.origin}/`,
+      },
+    });
+    if (error) throw error;
+  };
+
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    setUserRole(null);
+    setCompanyId(null);
+    setCompanyName(null);
+    navigate("/auth");
+  };
+
+  const refreshUserRole = async () => {
+    console.log("[AuthContext] Manual refresh requested");
+    if (user?.id) {
+      setLoading(true);
+      await fetchUserRole(user.id, 0);
+    }
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        session,
+        userRole,
+        companyId,
+        companyName,
+        loading,
+        signIn,
+        signUp,
+        signOut,
+        refreshUserRole,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};
