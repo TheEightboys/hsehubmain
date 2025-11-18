@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
+// Removed unused import for Tables
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,6 +13,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -41,8 +48,7 @@ import {
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, Search, Eye } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
+import { ArrowLeft, Plus, Search } from "lucide-react";
 import { RefreshAuthButton } from "@/components/RefreshAuthButton";
 
 interface Employee {
@@ -50,10 +56,10 @@ interface Employee {
   employee_number: string;
   full_name: string;
   email: string;
-  phone: string | null;
+  department_id: string | null;
   hire_date: string | null;
   is_active: boolean;
-  departments: { name: string } | null;
+  departments: { id: string; name: string } | null;
   job_roles: { title: string } | null;
   exposure_groups: { name: string } | null;
 }
@@ -71,13 +77,18 @@ export default function Employees() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     employee_number: "",
-    full_name: "",
+    first_name: "",
+    last_name: "",
     email: "",
-    phone: "",
     hire_date: "",
+    department_id: "",
     job_role: "",
-    is_active: true,
   });
+
+  // Filters
+  const [filterActive, setFilterActive] = useState<string>("all");
+  const [filterDepartment, setFilterDepartment] = useState<string>("all");
+  const [departments, setDepartments] = useState<any[]>([]);
 
   useEffect(() => {
     // Debug logging
@@ -96,9 +107,22 @@ export default function Employees() {
 
     if (companyId) {
       fetchEmployees();
+      fetchDepartments();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, loading, user, navigate]);
+
+  const fetchDepartments = async () => {
+    if (!companyId) return;
+    const { data, error } = await supabase
+      .from("departments")
+      .select("id, name")
+      .eq("company_id", companyId);
+
+    if (!error && data) {
+      setDepartments(data);
+    }
+  };
 
   const fetchEmployees = async () => {
     if (!companyId) return;
@@ -182,17 +206,18 @@ export default function Employees() {
         }
       }
 
-      // Insert employee
+      // Insert employee (combine first_name and last_name into full_name for DB)
+      const fullName = `${formData.first_name.trim()} ${formData.last_name.trim()}`;
+
       const { data, error } = await supabase.from("employees").insert({
         employee_number: formData.employee_number,
-        full_name: formData.full_name,
-        email: formData.email,
-        phone: formData.phone || null,
+        full_name: fullName,
+        email: formData.email || null,
         hire_date: formData.hire_date || null,
         job_role_id: jobRoleId,
-        department_id: null,
+        department_id: formData.department_id || null,
         exposure_group_id: null,
-        is_active: formData.is_active,
+        is_active: true,
         company_id: companyId,
       });
 
@@ -209,12 +234,12 @@ export default function Employees() {
       setIsDialogOpen(false);
       setFormData({
         employee_number: "",
-        full_name: "",
+        first_name: "",
+        last_name: "",
         email: "",
-        phone: "",
         hire_date: "",
+        department_id: "",
         job_role: "",
-        is_active: true,
       });
       fetchEmployees();
       return data;
@@ -244,12 +269,26 @@ export default function Employees() {
     setIsSheetOpen(true);
   };
 
-  const filteredEmployees = employees.filter(
-    (emp) =>
+  const filteredEmployees = employees.filter((emp) => {
+    // Search filter
+    const matchesSearch =
       emp.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      emp.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      emp.employee_number.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+      (emp.email &&
+        emp.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      emp.employee_number.toLowerCase().includes(searchTerm.toLowerCase());
+
+    // Active status filter
+    const matchesActive =
+      filterActive === "all" ||
+      (filterActive === "active" && emp.is_active) ||
+      (filterActive === "inactive" && !emp.is_active);
+
+    // Department filter
+    const matchesDepartment =
+      filterDepartment === "all" || emp.department_id === filterDepartment;
+
+    return matchesSearch && matchesActive && matchesDepartment;
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
@@ -269,8 +308,9 @@ export default function Employees() {
                 ⚠️ Company Setup Required
               </CardTitle>
               <CardDescription className="text-orange-600 dark:text-orange-400">
-                Your account is not linked to a company. If you just created a company, 
-                please <strong>sign out and sign back in</strong> to refresh your session.
+                Your account is not linked to a company. If you just created a
+                company, please <strong>sign out and sign back in</strong> to
+                refresh your session.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -300,7 +340,9 @@ export default function Employees() {
                 Logged in as: {user.email}
               </p>
               <p className="text-xs text-orange-600 dark:text-orange-400 font-mono">
-                Debug: User ID: {user.id?.substring(0, 8)}... | Company ID: {companyId?.substring(0, 8) || 'null'} | Role: {userRole || 'null'}
+                Debug: User ID: {user.id?.substring(0, 8)}... | Company ID:{" "}
+                {companyId?.substring(0, 8) || "null"} | Role:{" "}
+                {userRole || "null"}
               </p>
             </CardContent>
           </Card>
@@ -345,38 +387,41 @@ export default function Employees() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="full_name">Full Name *</Label>
+                      <Label htmlFor="first_name">First Name *</Label>
                       <Input
-                        id="full_name"
-                        value={formData.full_name}
+                        id="first_name"
+                        value={formData.first_name}
                         onChange={(e) =>
                           setFormData({
                             ...formData,
-                            full_name: e.target.value,
+                            first_name: e.target.value,
                           })
                         }
                         required
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="email">Email *</Label>
+                      <Label htmlFor="last_name">Last Name *</Label>
+                      <Input
+                        id="last_name"
+                        value={formData.last_name}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            last_name: e.target.value,
+                          })
+                        }
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">Email (Optional)</Label>
                       <Input
                         id="email"
                         type="email"
                         value={formData.email}
                         onChange={(e) =>
                           setFormData({ ...formData, email: e.target.value })
-                        }
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Phone</Label>
-                      <Input
-                        id="phone"
-                        value={formData.phone}
-                        onChange={(e) =>
-                          setFormData({ ...formData, phone: e.target.value })
                         }
                       />
                     </div>
@@ -393,6 +438,27 @@ export default function Employees() {
                     </div>
 
                     <div className="space-y-2">
+                      <Label htmlFor="department">Department</Label>
+                      <Select
+                        value={formData.department_id}
+                        onValueChange={(value) =>
+                          setFormData({ ...formData, department_id: value })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select department" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {departments.map((dept) => (
+                            <SelectItem key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
                       <Label>Hire Date</Label>
                       <Input
                         type="date"
@@ -404,16 +470,6 @@ export default function Employees() {
                           })
                         }
                       />
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <Switch
-                        checked={formData.is_active}
-                        onCheckedChange={(checked) =>
-                          setFormData({ ...formData, is_active: checked })
-                        }
-                      />
-                      <Label>Active Employee</Label>
                     </div>
 
                     <DialogFooter className="pt-2">
@@ -434,6 +490,43 @@ export default function Employees() {
             </div>
           </CardHeader>
           <CardContent>
+            {/* Filters */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-4">
+              <div className="flex-1">
+                <Label className="text-xs mb-1">Status Filter</Label>
+                <Select value={filterActive} onValueChange={setFilterActive}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Filter by status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Employees</SelectItem>
+                    <SelectItem value="active">Active Only</SelectItem>
+                    <SelectItem value="inactive">Inactive Only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1">
+                <Label className="text-xs mb-1">Department Filter</Label>
+                <Select
+                  value={filterDepartment}
+                  onValueChange={setFilterDepartment}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Filter by department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Departments</SelectItem>
+                    {departments.map((dept) => (
+                      <SelectItem key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Search Bar */}
             <div className="mb-4">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
@@ -453,18 +546,17 @@ export default function Employees() {
                     <TableHead>Employee #</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
+                    <TableHead>Department</TableHead>
                     <TableHead>Job Role</TableHead>
                     <TableHead>Hire Date</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredEmployees.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={8}
+                        colSpan={7}
                         className="text-center py-8 text-muted-foreground"
                       >
                         No employees found
@@ -472,13 +564,19 @@ export default function Employees() {
                     </TableRow>
                   ) : (
                     filteredEmployees.map((employee) => (
-                      <TableRow key={employee.id}>
+                      <TableRow
+                        key={employee.id}
+                        className="cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => navigate(`/employees/${employee.id}`)}
+                      >
                         <TableCell>{employee.employee_number}</TableCell>
                         <TableCell className="font-medium">
                           {employee.full_name}
                         </TableCell>
-                        <TableCell>{employee.email}</TableCell>
-                        <TableCell>{employee.phone || "-"}</TableCell>
+                        <TableCell>{employee.email || "-"}</TableCell>
+                        <TableCell>
+                          {employee.departments?.name || "-"}
+                        </TableCell>
                         <TableCell>
                           {employee.job_roles?.title || "-"}
                         </TableCell>
@@ -491,15 +589,6 @@ export default function Employees() {
                           >
                             {employee.is_active ? "Active" : "Inactive"}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleViewEmployee(employee)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </Button>
                         </TableCell>
                       </TableRow>
                     ))
@@ -537,12 +626,7 @@ export default function Employees() {
                     <p className="text-sm text-muted-foreground">Email</p>
                     <p className="font-medium">{selectedEmployee?.email}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Phone</p>
-                    <p className="font-medium">
-                      {selectedEmployee?.phone || "-"}
-                    </p>
-                  </div>
+
                   <div>
                     <p className="text-sm text-muted-foreground">Hire Date</p>
                     <p className="font-medium">

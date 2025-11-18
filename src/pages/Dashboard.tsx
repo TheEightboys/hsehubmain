@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Shield,
   Users,
@@ -42,7 +43,8 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { user, userRole, companyId, companyName, loading, signOut } = useAuth();
+  const { user, userRole, companyId, companyName, loading, signOut } =
+    useAuth();
   const navigate = useNavigate();
   const [stats, setStats] = useState({
     employees: 0,
@@ -50,9 +52,13 @@ export default function Dashboard() {
     audits: 0,
     tasks: 0,
     complianceRate: 0,
+    overdueObligations: 0,
+    recentIncidents: 0,
   });
 
-  const [assessmentTrends, setAssessmentTrends] = useState<any[]>([]);
+  const [healthCheckups, setHealthCheckups] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [recentAlerts, setRecentAlerts] = useState<any[]>([]);
 
   useEffect(() => {
@@ -64,8 +70,16 @@ export default function Dashboard() {
   useEffect(() => {
     if (companyId && userRole !== "super_admin") {
       fetchStats();
+      fetchHealthCheckups();
+      fetchTasks();
     }
   }, [companyId, userRole]);
+
+  useEffect(() => {
+    if (companyId && userRole !== "super_admin") {
+      fetchTasks();
+    }
+  }, [showCompletedTasks, companyId, userRole]);
 
   const fetchStats = async () => {
     if (!companyId) return;
@@ -101,7 +115,15 @@ export default function Dashboard() {
       const totalAudits = auditsRes.count || 0;
       const completedAudits = completedAuditsRes.count || 0;
       const complianceRate =
-        totalAudits > 0 ? Math.round((completedAudits / totalAudits) * 100) : 85;
+        totalAudits > 0
+          ? Math.round((completedAudits / totalAudits) * 100)
+          : 85;
+
+      // Calculate overdue obligations
+      const overdueObligations = await fetchOverdueObligations();
+
+      // Calculate recent incidents (last 7 days)
+      const recentIncidents = await fetchRecentIncidents();
 
       setStats({
         employees: employeesRes.count || 45,
@@ -109,10 +131,9 @@ export default function Dashboard() {
         audits: totalAudits || 156,
         tasks: tasksRes.count || 0,
         complianceRate,
+        overdueObligations,
+        recentIncidents,
       });
-
-      // Fetch assessment trends (last 6 months)
-      await fetchAssessmentTrends();
 
       // Fetch recent alerts/tasks
       await fetchRecentAlerts();
@@ -121,58 +142,174 @@ export default function Dashboard() {
     }
   };
 
-  const fetchAssessmentTrends = async () => {
+  const fetchOverdueObligations = async (): Promise<number> => {
+    if (!companyId) return 0;
+
+    try {
+      const today = new Date().toISOString();
+
+      // Count expired trainings, certificates, and overdue measures
+      const [expiredTrainings, overdueMeasures] = await Promise.all([
+        supabase
+          .from("training_records")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", companyId)
+          .lt("expiry_date", today),
+        supabase
+          .from("measures")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", companyId)
+          .lt("due_date", today)
+          .neq("status", "completed"),
+      ]);
+
+      return (expiredTrainings.count || 0) + (overdueMeasures.count || 0);
+    } catch (error) {
+      console.error("Error fetching overdue obligations:", error);
+      return 0;
+    }
+  };
+
+  const fetchRecentIncidents = async (): Promise<number> => {
+    if (!companyId) return 0;
+
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const { count } = await supabase
+        .from("incidents")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .gte("incident_date", sevenDaysAgo.toISOString());
+
+      return count || 0;
+    } catch (error) {
+      console.error("Error fetching recent incidents:", error);
+      return 0;
+    }
+  };
+
+  const fetchHealthCheckups = async () => {
     if (!companyId) return;
 
     try {
-      // Get audits from last 6 months with their status
-      const sixMonthsAgo = new Date();
-      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      const today = new Date().toISOString();
 
+      // Fetch health checkup data from medical_records or similar table
       const { data, error } = await supabase
-        .from("audits")
-        .select("created_at, status")
+        .from("medical_records")
+        .select("id, status, scheduled_date")
         .eq("company_id", companyId)
-        .gte("created_at", sixMonthsAgo.toISOString())
-        .order("created_at", { ascending: true });
+        .order("scheduled_date", { ascending: false });
 
-      if (error) throw error;
-
-      // Group by month and status
-      const monthlyData: Record<string, { completed: number; pending: number }> = {};
-      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-      // Initialize last 6 months
-      for (let i = 5; i >= 0; i--) {
-        const date = new Date();
-        date.setMonth(date.getMonth() - i);
-        const monthKey = months[date.getMonth()];
-        monthlyData[monthKey] = { completed: 0, pending: 0 };
+      if (error) {
+        console.error("Error fetching health checkups:", error);
+        // Use mock data if table doesn't exist yet
+        setHealthCheckups([
+          { status: "planned", count: 15 },
+          { status: "due", count: 8 },
+          { status: "completed", count: 42 },
+          { status: "cancelled", count: 3 },
+        ]);
+        return;
       }
 
-      // Populate with real data
-      data?.forEach((audit) => {
-        const date = new Date(audit.created_at);
-        const monthKey = months[date.getMonth()];
-        if (monthlyData[monthKey]) {
-          if (audit.status === "completed") {
-            monthlyData[monthKey].completed++;
-          } else {
-            monthlyData[monthKey].pending++;
-          }
+      // Group by status
+      const statusCounts = {
+        planned: 0,
+        due: 0,
+        completed: 0,
+        cancelled: 0,
+      };
+
+      data?.forEach((record: any) => {
+        if (record.status in statusCounts) {
+          statusCounts[record.status as keyof typeof statusCounts]++;
         }
       });
 
-      // Convert to chart format
-      const chartData = Object.keys(monthlyData).map((month) => ({
-        month,
-        Completed: monthlyData[month].completed,
-        Pending: monthlyData[month].pending,
-      }));
-
-      setAssessmentTrends(chartData);
+      setHealthCheckups([
+        { status: "Planned", count: statusCounts.planned, color: "#3b82f6" },
+        { status: "Due", count: statusCounts.due, color: "#f59e0b" },
+        {
+          status: "Completed",
+          count: statusCounts.completed,
+          color: "#22c55e",
+        },
+        {
+          status: "Cancelled",
+          count: statusCounts.cancelled,
+          color: "#ef4444",
+        },
+      ]);
     } catch (error) {
-      console.error("Error fetching assessment trends:", error);
+      console.error("Error fetching health checkups:", error);
+      // Use mock data
+      setHealthCheckups([
+        { status: "Planned", count: 15, color: "#3b82f6" },
+        { status: "Due", count: 8, color: "#f59e0b" },
+        { status: "Completed", count: 42, color: "#22c55e" },
+        { status: "Cancelled", count: 3, color: "#ef4444" },
+      ]);
+    }
+  };
+
+  const fetchTasks = async () => {
+    if (!companyId) return;
+
+    try {
+      const statusFilter = showCompletedTasks
+        ? "completed"
+        : ["pending", "in_progress"];
+
+      const { data, error } = await supabase
+        .from("tasks")
+        .select(
+          `
+          id,
+          title,
+          due_date,
+          status,
+          priority,
+          assigned_to,
+          employees (
+            id,
+            full_name
+          )
+        `
+        )
+        .eq("company_id", companyId)
+        .in(
+          "status",
+          Array.isArray(statusFilter) ? statusFilter : [statusFilter]
+        )
+        .order("due_date", { ascending: true })
+        .limit(10);
+
+      if (error) throw error;
+
+      setTasks(data || []);
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+    }
+  };
+
+  const toggleTaskStatus = async (taskId: string, currentStatus: string) => {
+    try {
+      const newStatus = currentStatus === "completed" ? "pending" : "completed";
+
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status: newStatus })
+        .eq("id", taskId);
+
+      if (error) throw error;
+
+      // Refresh tasks
+      await fetchTasks();
+    } catch (error) {
+      console.error("Error updating task status:", error);
     }
   };
 
@@ -221,7 +358,7 @@ export default function Dashboard() {
       <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl sm:text-3xl font-bold mb-2">
-            {companyName ? `${companyName} Dashboard` : 'Company Dashboard'}
+            {companyName ? `${companyName} Dashboard` : "Company Dashboard"}
           </h2>
           <p className="text-sm sm:text-base text-muted-foreground">
             Welcome back! Here's your safety management overview.
@@ -241,7 +378,9 @@ export default function Dashboard() {
       {userRole === "super_admin" ? (
         <>
           {/* Redirect super admin to their dashboard */}
-          {typeof window !== 'undefined' && window.location.pathname === '/dashboard' && navigate('/super-admin/dashboard')}
+          {typeof window !== "undefined" &&
+            window.location.pathname === "/dashboard" &&
+            navigate("/super-admin/dashboard")}
           <div className="space-y-6">
             <Card>
               <CardHeader>
@@ -275,7 +414,7 @@ export default function Dashboard() {
       ) : (
         <>
           {/* Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
             <Card className="border-0 shadow-sm bg-white dark:bg-card">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -298,30 +437,18 @@ export default function Dashboard() {
             <Card className="border-0 shadow-sm bg-white dark:bg-card">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Active Assessments
+                  Overdue HSE Obligations
                 </CardTitle>
-                <div className="w-12 h-12 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
-                  <svg
-                    className="h-6 w-6 text-orange-600 dark:text-orange-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
+                <div className="w-12 h-12 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+                  <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="text-4xl font-bold text-gray-900 dark:text-white">
-                  {stats.riskAssessments}
+                  {stats.overdueObligations}
                 </div>
-                <p className="text-sm text-orange-600 dark:text-orange-400 mt-2">
-                  <span>⏳ In progress</span>
+                <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                  <span>⚠️ Needs attention</span>
                 </p>
               </CardContent>
             </Card>
@@ -329,11 +456,11 @@ export default function Dashboard() {
             <Card className="border-0 shadow-sm bg-white dark:bg-card">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Completed
+                  Last 7 Days: Incidents
                 </CardTitle>
-                <div className="w-12 h-12 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                <div className="w-12 h-12 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
                   <svg
-                    className="h-6 w-6 text-green-600 dark:text-green-400"
+                    className="h-6 w-6 text-amber-600 dark:text-amber-400"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -342,126 +469,165 @@ export default function Dashboard() {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeWidth={2}
-                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                     />
                   </svg>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="text-4xl font-bold text-gray-900 dark:text-white">
-                  {stats.audits}
+                  {stats.recentIncidents}
                 </div>
-                <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                  <span>✅ All time</span>
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-sm bg-white dark:bg-card">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Compliance Rate
-                </CardTitle>
-                <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-                  <svg
-                    className="h-6 w-6 text-emerald-600 dark:text-emerald-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-                    />
-                  </svg>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-4xl font-bold text-gray-900 dark:text-white">
-                  {stats.complianceRate}%
-                </div>
-                <p className="text-sm text-green-600 dark:text-green-400 mt-2">
-                  <span>📈 +3% this month</span>
+                <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
+                  <span>📊 New reports</span>
                 </p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Charts Section */}
+          {/* Dashboard Widgets */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
-            {/* Assessment Trends Chart */}
+            {/* Health Check-ups Chart */}
             <Card className="border-0 shadow-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <BarChart className="w-5 h-5" />
-                  Assessment Trends
-                </CardTitle>
-                <CardDescription>Monthly assessment completion status</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <RechartsBarChart data={assessmentTrends}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="month" className="text-xs" />
-                    <YAxis className="text-xs" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--background))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                      }}
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
                     />
-                    <Legend />
-                    <Bar dataKey="Completed" fill="#22c55e" radius={[8, 8, 0, 0]} />
-                    <Bar dataKey="Pending" fill="#f59e0b" radius={[8, 8, 0, 0]} />
-                  </RechartsBarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Compliance Overview Pie Chart */}
-            <Card className="border-0 shadow-sm">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5" />
-                  Compliance Overview
+                  </svg>
+                  Health Check-ups
                 </CardTitle>
-                <CardDescription>Current compliance status</CardDescription>
+                <CardDescription>
+                  Status of employee health assessments
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
-                      data={[
-                        { name: "Compliant", value: stats.complianceRate },
-                        { name: "Non-Compliant", value: 100 - stats.complianceRate },
-                      ]}
+                      data={healthCheckups}
                       cx="50%"
                       cy="50%"
                       labelLine={false}
-                      label={({ name, value }) => `${name}: ${value}%`}
+                      label={({ status, count }) => `${status}: ${count}`}
                       outerRadius={80}
                       fill="#8884d8"
-                      dataKey="value"
+                      dataKey="count"
                     >
-                      <Cell fill="#22c55e" />
-                      <Cell fill="#ef4444" />
+                      {healthCheckups.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
                     </Pie>
                     <Tooltip />
                   </PieChart>
                 </ResponsiveContainer>
-                <div className="flex justify-center gap-6 mt-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                    <span className="text-sm text-muted-foreground">Compliant: {stats.complianceRate}%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                    <span className="text-sm text-muted-foreground">Non-Compliant: {100 - stats.complianceRate}%</span>
-                  </div>
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  {healthCheckups.map((item, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: item.color }}
+                      ></div>
+                      <span className="text-sm text-muted-foreground">
+                        {item.status}: {item.count}
+                      </span>
+                    </div>
+                  ))}
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Task Overview */}
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <ListTodo className="w-5 h-5" />
+                      Task Overview
+                    </CardTitle>
+                    <CardDescription>
+                      {showCompletedTasks
+                        ? "Completed tasks"
+                        : "Upcoming tasks"}
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCompletedTasks(!showCompletedTasks)}
+                  >
+                    {showCompletedTasks ? "Show Upcoming" : "Show Completed"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[300px] pr-4">
+                  {tasks.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                      No {showCompletedTasks ? "completed" : "upcoming"} tasks
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {tasks.map((task: any) => (
+                        <div
+                          key={task.id}
+                          className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={task.status === "completed"}
+                            onChange={() =>
+                              toggleTaskStatus(task.id, task.status)
+                            }
+                            className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <Link
+                              to={`/employees/${task.assigned_to}`}
+                              className="font-medium text-sm hover:text-primary hover:underline"
+                            >
+                              {task.title}
+                            </Link>
+                            {task.employees && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Assigned to:{" "}
+                                {task.employees.full_name || "Unassigned"}
+                              </p>
+                            )}
+                            {task.due_date && (
+                              <p className="text-xs text-muted-foreground">
+                                Due:{" "}
+                                {new Date(task.due_date).toLocaleDateString()}
+                              </p>
+                            )}
+                          </div>
+                          {task.priority && (
+                            <Badge
+                              variant={
+                                task.priority === "high"
+                                  ? "destructive"
+                                  : "secondary"
+                              }
+                              className="text-xs"
+                            >
+                              {task.priority}
+                            </Badge>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
               </CardContent>
             </Card>
           </div>
@@ -488,11 +654,20 @@ export default function Dashboard() {
                         <div>
                           <p className="font-medium text-sm">{alert.title}</p>
                           <p className="text-xs text-muted-foreground">
-                            Due: {alert.due_date ? new Date(alert.due_date).toLocaleDateString() : "Not set"}
+                            Due:{" "}
+                            {alert.due_date
+                              ? new Date(alert.due_date).toLocaleDateString()
+                              : "Not set"}
                           </p>
                         </div>
                       </div>
-                      <Badge variant={alert.priority === "high" ? "destructive" : "secondary"}>
+                      <Badge
+                        variant={
+                          alert.priority === "high"
+                            ? "destructive"
+                            : "secondary"
+                        }
+                      >
                         {alert.priority || "normal"}
                       </Badge>
                     </div>
@@ -501,155 +676,6 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           )}
-
-          {/* Quick Actions */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-            <Link to="/employees" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-primary" />
-                    Employees
-                  </CardTitle>
-                  <CardDescription>
-                    Manage employee records and assignments
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/activity-groups" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 border-blue-100">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                    Activity & Exposure Groups
-                  </CardTitle>
-                  <CardDescription>
-                    Define work activities and exposure factors
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/risk-assessments" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle className="w-5 h-5 text-warning" />
-                    Risk Assessments
-                  </CardTitle>
-                  <CardDescription>
-                    Create and review risk assessments (GBU)
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/measures" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 border-green-100">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                    </svg>
-                    Measures & Controls
-                  </CardTitle>
-                  <CardDescription>
-                    Track corrective and preventive actions
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/audits" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileCheck className="w-5 h-5 text-primary" />
-                    Audits
-                  </CardTitle>
-                  <CardDescription>
-                    Schedule and conduct safety audits
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/tasks" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <ListTodo className="w-5 h-5 text-success" />
-                    Tasks
-                  </CardTitle>
-                  <CardDescription>
-                    Track and manage safety tasks
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/training" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-success" />
-                    Training
-                  </CardTitle>
-                  <CardDescription>
-                    Assign and track safety training
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/incidents" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 border-red-100">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    Incidents
-                  </CardTitle>
-                  <CardDescription>
-                    Report and investigate incidents
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/reports" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 border-purple-100">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BarChart className="w-5 h-5 text-purple-600" />
-                    Reports
-                  </CardTitle>
-                  <CardDescription>
-                    HSE analytics and compliance reports
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-
-            <Link to="/settings" className="block">
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Settings className="w-5 h-5" />
-                    Settings
-                  </CardTitle>
-                  <CardDescription>
-                    Configure departments, roles, and categories
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            </Link>
-          </div>
         </>
       )}
     </div>

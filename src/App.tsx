@@ -8,6 +8,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
 import Employees from "./pages/Employees";
+import EmployeeProfile from "./pages/EmployeeProfile";
 import ActivityGroups from "./pages/ActivityGroups";
 import RiskAssessments from "./pages/RiskAssessments";
 import Measures from "./pages/Measures";
@@ -15,7 +16,10 @@ import Audits from "./pages/Audits";
 import Tasks from "./pages/Tasks";
 import Training from "./pages/Training";
 import Incidents from "./pages/Incidents";
+import Investigations from "./pages/Investigations";
 import Settings from "./pages/Settings";
+import Profile from "./pages/Profile";
+import Invoices from "./pages/Invoices";
 import SetupCompany from "./pages/SetupCompany";
 import Messages from "./pages/Messages";
 import Documents from "./pages/Documents";
@@ -86,6 +90,14 @@ const App = () => (
               }
             />
             <Route
+              path="/employees/:id"
+              element={
+                <MainLayout>
+                  <EmployeeProfile />
+                </MainLayout>
+              }
+            />
+            <Route
               path="/activity-groups"
               element={
                 <MainLayout>
@@ -142,6 +154,14 @@ const App = () => (
               }
             />
             <Route
+              path="/investigations"
+              element={
+                <MainLayout>
+                  <Investigations />
+                </MainLayout>
+              }
+            />
+            <Route
               path="/messages"
               element={
                 <MainLayout>
@@ -170,6 +190,22 @@ const App = () => (
               element={
                 <MainLayout>
                   <Settings />
+                </MainLayout>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <MainLayout>
+                  <Profile />
+                </MainLayout>
+              }
+            />
+            <Route
+              path="/invoices"
+              element={
+                <MainLayout>
+                  <Invoices />
                 </MainLayout>
               }
             />
