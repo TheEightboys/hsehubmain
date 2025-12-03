@@ -264,6 +264,98 @@ export interface ExposureGroup {
 }
 
 // ============================================
+// DOCUMENTS
+// ============================================
+
+export type DocumentCategory = 
+  | 'policy' 
+  | 'procedure' 
+  | 'risk_assessment' 
+  | 'training' 
+  | 'incident_report' 
+  | 'audit_report' 
+  | 'certificate' 
+  | 'permit' 
+  | 'inspection' 
+  | 'other';
+
+export interface Document {
+  id: string;
+  company_id: string;
+  title: string;
+  description: string | null;
+  category: DocumentCategory;
+  file_name: string;
+  file_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  tags: string[] | null;
+  department_id: string | null;
+  is_public: boolean;
+  allowed_roles: string[] | null;
+  version: string;
+  expiry_date: string | null;
+  uploaded_by: string | null;
+  created_at: string;
+  updated_at: string;
+  related_risk_assessment_id: string | null;
+  related_audit_id: string | null;
+  related_incident_id: string | null;
+  related_training_id: string | null;
+}
+
+export interface DocumentInsert {
+  company_id: string;
+  title: string;
+  category: DocumentCategory;
+  file_name: string;
+  file_path: string;
+  description?: string | null;
+  file_size?: number | null;
+  mime_type?: string | null;
+  tags?: string[] | null;
+  department_id?: string | null;
+  is_public?: boolean;
+  allowed_roles?: string[] | null;
+  version?: string;
+  expiry_date?: string | null;
+  uploaded_by?: string | null;
+  related_risk_assessment_id?: string | null;
+  related_audit_id?: string | null;
+  related_incident_id?: string | null;
+  related_training_id?: string | null;
+}
+
+export interface DocumentUpdate {
+  title?: string;
+  description?: string | null;
+  category?: DocumentCategory;
+  tags?: string[] | null;
+  department_id?: string | null;
+  is_public?: boolean;
+  allowed_roles?: string[] | null;
+  version?: string;
+  expiry_date?: string | null;
+  related_risk_assessment_id?: string | null;
+  related_audit_id?: string | null;
+  related_incident_id?: string | null;
+  related_training_id?: string | null;
+  updated_at?: string;
+}
+
+export interface DocumentWithUploader extends Document {
+  uploader?: {
+    email: string;
+    user_metadata?: {
+      full_name?: string;
+    };
+  };
+  department?: {
+    name: string;
+  };
+}
+
+// ============================================
 // TYPE GUARDS
 // ============================================
 
@@ -318,6 +410,19 @@ export const investigationStatusLabels: Record<InvestigationStatus, string> = {
   closed: 'Closed',
 };
 
+export const documentCategoryLabels: Record<DocumentCategory, string> = {
+  policy: 'Policy',
+  procedure: 'Procedure',
+  risk_assessment: 'Risk Assessment',
+  training: 'Training',
+  incident_report: 'Incident Report',
+  audit_report: 'Audit Report',
+  certificate: 'Certificate',
+  permit: 'Permit',
+  inspection: 'Inspection',
+  other: 'Other',
+};
+
 // ============================================
 // UTILITY TYPES FOR SUPABASE QUERIES
 // ============================================
@@ -355,6 +460,11 @@ export type Database = {
         Row: ActivityTrainingRequirement;
         Insert: ActivityTrainingRequirementInsert;
         Update: Partial<ActivityTrainingRequirementInsert>;
+      };
+      documents: {
+        Row: Document;
+        Insert: DocumentInsert;
+        Update: DocumentUpdate;
       };
     };
   };

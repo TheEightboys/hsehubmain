@@ -45,7 +45,8 @@ export default function SetupCompany() {
         setCompanyInfo(data);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to load company details";
+      const message =
+        err instanceof Error ? err.message : "Unable to load company details";
       setCompanyInfoError(message);
       setCompanyInfo(null);
     } finally {
@@ -99,12 +100,12 @@ export default function SetupCompany() {
         const missingFunction =
           rpcError.code === "42883" ||
           rpcError.code === "PGRST301" ||
-          rpcError.status === 404 ||
+          (rpcError as any).status === 404 ||
           rpcError.message?.toLowerCase().includes("does not exist");
 
         if (missingFunction) {
           console.log("RPC not found, using direct insert fallback...");
-          
+
           // Direct insert: create company
           const { data: companyData, error: companyError } = await supabase
             .from("companies")
@@ -134,7 +135,9 @@ export default function SetupCompany() {
           if (roleError) {
             console.error("Role link error:", roleError);
             // Company created but role link failed - still show success
-            toast.warning("Company created but role link needs verification. Please refresh.");
+            toast.warning(
+              "Company created but role link needs verification. Please refresh."
+            );
           } else {
             toast.success("Company created successfully! Redirecting...");
           }
@@ -200,7 +203,9 @@ export default function SetupCompany() {
                 {companyInfo.email && (
                   <div>
                     <span className="text-muted-foreground">Email:</span>
-                    <span className="ml-2 font-medium">{companyInfo.email}</span>
+                    <span className="ml-2 font-medium">
+                      {companyInfo.email}
+                    </span>
                   </div>
                 )}
                 {companyInfo.created_at && (
@@ -224,7 +229,11 @@ export default function SetupCompany() {
               <Button onClick={() => navigate("/dashboard")} className="w-full">
                 Go to Dashboard
               </Button>
-              <Button variant="outline" onClick={() => loadCompanyInfo(companyId)} className="w-full">
+              <Button
+                variant="outline"
+                onClick={() => loadCompanyInfo(companyId)}
+                className="w-full"
+              >
                 Refresh Company Info
               </Button>
             </div>
@@ -238,7 +247,11 @@ export default function SetupCompany() {
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
       <div className="container mx-auto px-4 py-4 sm:py-8">
         <div className="mb-4 sm:mb-6">
-          <Button variant="ghost" onClick={() => navigate("/dashboard")} className="h-9 sm:h-10">
+          <Button
+            variant="ghost"
+            onClick={() => navigate("/dashboard")}
+            className="h-9 sm:h-10"
+          >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back
           </Button>
@@ -252,12 +265,15 @@ export default function SetupCompany() {
                 Setup Your Company
               </CardTitle>
               <CardDescription className="text-sm">
-                Create a company to start managing employees and safety records. This only takes a few seconds.
+                Create a company to start managing employees and safety records.
+                This only takes a few seconds.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 p-4 sm:p-6">
               <div className="space-y-2">
-                <Label htmlFor="companyName" className="text-sm sm:text-base">Company Name</Label>
+                <Label htmlFor="companyName" className="text-sm sm:text-base">
+                  Company Name
+                </Label>
                 <Input
                   id="companyName"
                   value={companyName}
@@ -276,7 +292,8 @@ export default function SetupCompany() {
               </Button>
 
               <p className="text-xs text-muted-foreground text-center pt-2">
-                Logged in as: <strong className="break-all">{user?.email}</strong>
+                Logged in as:{" "}
+                <strong className="break-all">{user?.email}</strong>
               </p>
             </CardContent>
           </Card>

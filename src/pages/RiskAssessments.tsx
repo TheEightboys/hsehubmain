@@ -1,7 +1,22 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLanguage } from "@/contexts/LanguageContext";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Plus, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  Plus,
+  Search,
+  Shield,
+  AlertTriangle,
+  AlertOctagon,
+  Info,
+  X,
+  Upload,
+  Check,
+  Save,
+  Grid3x3,
+  FileDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -26,8 +41,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
-import { DialogDescription } from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -36,70 +52,136 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
-import type { Tables } from "@/integrations/supabase/types";
 import { useToast } from "@/hooks/use-toast";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import { Progress } from "@/components/ui/progress";
 
-const riskSchema = z.object({
-  title: z.string().min(1, "Title is required"),
-  description: z.string().optional(),
-  risk_category_id: z.string().optional(),
-  department_id: z.string().optional(),
-  likelihood: z.number().min(1).max(5),
-  severity: z.number().min(1).max(5),
-  mitigation_measures: z.string().optional(),
-  status: z.string().default("open"),
-  assessment_date: z.string().min(1, "Assessment date is required"),
-});
+// Types
+type Risk = any;
+type Location = { id: string; name: string };
+type Department = { id: string; name: string };
+type ExposureGroup = { id: string; name: string };
+type Employee = { id: string; full_name: string };
+type Measure = {
+  id?: string;
+  measure_building_block: string;
+  responsible_person: string;
+  responsible_person_name?: string;
+  due_date: string;
+  progress_status: string;
+  notes?: string;
+};
 
-type RiskFormData = z.infer<typeof riskSchema>;
+// Constants
+const HAZARD_CATEGORIES = [
+  "Mechanical",
+  "Electrical",
+  "Chemical",
+  "Biological",
+  "Ergonomic",
+  "Physical",
+  "Psychosocial",
+  "Fire/Explosion",
+  "Environmental",
+  "Other",
+];
+
+const RISK_MATRIX_LABELS = [
+  "Negligible",
+  "Minor",
+  "Moderate",
+  "Major",
+  "Catastrophic",
+];
+
+const MEASURE_BUILDING_BLOCKS = [
+  "Elimination",
+  "Substitution",
+  "Engineering Controls",
+  "Administrative Controls",
+  "Personal Protective Equipment (PPE)",
+  "Training",
+  "Supervision",
+  "Maintenance",
+  "Emergency Procedures",
+  "Other",
+];
+
+const PROBABILITY_LABELS = [
+  { value: 1, de: "Sehr unwahrscheinlich", en: "Very Unlikely" },
+  { value: 2, de: "Unwahrscheinlich", en: "Unlikely" },
+  { value: 3, de: "Möglich", en: "Possible" },
+  { value: 4, de: "Wahrscheinlich", en: "Probable" },
+  { value: 5, de: "Sehr wahrscheinlich", en: "Very Probable" },
+];
+
+const DAMAGE_EXTENT_LABELS = [
+  { value: 1, de: "Sehr gering", en: "Very Low" },
+  { value: 2, de: "Gering", en: "Low" },
+  { value: 3, de: "Mittel", en: "Medium" },
+  { value: 4, de: "Hoch", en: "High" },
+  { value: 5, de: "Sehr hoch", en: "Very High" },
+];
 
 export default function RiskAssessments() {
   const { user, loading, companyId } = useAuth();
+  const { t, language } = useLanguage();
   const navigate = useNavigate();
   const { toast } = useToast();
-  type RiskWithJoins = Tables<"risk_assessments"> & {
-    risk_categories?: { name: string } | null;
-    departments?: { name: string } | null;
-    employees?: { full_name: string } | null;
-  };
 
-  const [risks, setRisks] = useState<RiskWithJoins[]>([]);
-  const [categories, setCategories] = useState<Tables<"risk_categories">[]>([]);
-  const [departments, setDepartments] = useState<Tables<"departments">[]>([]);
+  // State
+  const [risks, setRisks] = useState<Risk[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [exposureGroups, setExposureGroups] = useState<ExposureGroup[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isMatrixDialogOpen, setIsMatrixDialogOpen] = useState(false);
+  const [isApprovalDialogOpen, setIsApprovalDialogOpen] = useState(false);
+  const [approvalComment, setApprovalComment] = useState("");
+  const [selectedRisk, setSelectedRisk] = useState<Risk | null>(null);
   const [loadingData, setLoadingData] = useState(false);
+  const [formStep, setFormStep] = useState(1);
+  const [editableNotes, setEditableNotes] = useState("");
 
-  const form = useForm<RiskFormData>({
-    resolver: zodResolver(riskSchema),
-    defaultValues: {
-      title: "",
-      description: "",
-      risk_category_id: "",
-      department_id: "",
-      likelihood: 3,
-      severity: 3,
-      mitigation_measures: "",
-      status: "open",
-      assessment_date: "",
-    },
+  // Form state
+  const [formData, setFormData] = useState({
+    title: "",
+    description: "",
+    department_id: "",
+    location_id: "",
+    exposure_group_id: "",
+    line_manager_id: "",
+    hazard_category: "",
+    probability_before: 3,
+    probability_after: 2,
+    extent_damage_before: 3,
+    extent_damage_after: 2,
+    risk_matrix_label: "",
+    mitigation_measures: "",
+    notes: "",
+    assessment_date: new Date().toISOString().split("T")[0],
   });
 
-  const likelihood = form.watch("likelihood");
-  const severity = form.watch("severity");
-  const riskScore = likelihood * severity;
+  const [measures, setMeasures] = useState<Measure[]>([
+    {
+      measure_building_block: "",
+      responsible_person: "",
+      due_date: "",
+      progress_status: "not_started",
+      notes: "",
+    },
+  ]);
+
+  const [uploadedDocuments, setUploadedDocuments] = useState<string[]>([]);
+
+  // Calculated risk scores
+  const riskScoreBefore =
+    formData.probability_before * formData.extent_damage_before;
+  const riskScoreAfter =
+    formData.probability_after * formData.extent_damage_after;
 
   const getRiskLevel = (score: number) => {
     if (score >= 20) return "critical";
@@ -123,28 +205,68 @@ export default function RiskAssessments() {
 
     setLoadingData(true);
     try {
-      const [risksRes, categoriesRes, departmentsRes] = await Promise.all([
+      const [
+        risksRes,
+        locationsRes,
+        departmentsRes,
+        exposureGroupsRes,
+        employeesRes,
+      ] = await Promise.all([
         supabase
           .from("risk_assessments")
           .select(
-            "*, risk_categories(name), departments(name), employees(full_name)"
+            "*, departments(name), locations(name), exposure_groups(name), employees!risk_assessments_line_manager_id_fkey(full_name)"
           )
           .eq("company_id", companyId)
           .order("assessment_date", { ascending: false }),
         supabase
-          .from("risk_categories")
-          .select("*")
-          .eq("company_id", companyId),
-        supabase.from("departments").select("*").eq("company_id", companyId),
+          .from("locations")
+          .select("id, name")
+          .eq("company_id", companyId)
+          .order("name"),
+        supabase
+          .from("departments")
+          .select("id, name")
+          .eq("company_id", companyId)
+          .order("name"),
+        supabase
+          .from("exposure_groups")
+          .select("id, name")
+          .eq("company_id", companyId)
+          .order("name"),
+        supabase
+          .from("employees")
+          .select("id, full_name")
+          .eq("company_id", companyId)
+          .order("full_name"),
       ]);
 
       if (risksRes.error) throw risksRes.error;
-      if (categoriesRes.error) throw categoriesRes.error;
+      if (locationsRes.error) throw locationsRes.error;
       if (departmentsRes.error) throw departmentsRes.error;
+      if (exposureGroupsRes.error) throw exposureGroupsRes.error;
+      if (employeesRes.error) throw employeesRes.error;
 
-      setRisks((risksRes.data as RiskWithJoins[]) || []);
-      setCategories((categoriesRes.data as Tables<"risk_categories">[]) || []);
-      setDepartments((departmentsRes.data as Tables<"departments">[]) || []);
+      // Fetch measures for each risk assessment
+      const risksWithMeasures = await Promise.all(
+        (risksRes.data || []).map(async (risk) => {
+          const { data: measures } = await supabase
+            .from("risk_assessment_measures")
+            .select("*, employees(full_name)")
+            .eq("risk_assessment_id", risk.id);
+
+          return {
+            ...risk,
+            measures: measures || [],
+          };
+        })
+      );
+
+      setRisks(risksWithMeasures);
+      setLocations(locationsRes.data || []);
+      setDepartments(departmentsRes.data || []);
+      setExposureGroups(exposureGroupsRes.data || []);
+      setEmployees(employeesRes.data || []);
     } catch (err: unknown) {
       const e = err as { message?: string } | Error | null;
       const message =
@@ -159,7 +281,7 @@ export default function RiskAssessments() {
     }
   };
 
-  const onSubmit = async (data: RiskFormData) => {
+  const onSubmit = async () => {
     if (!companyId) {
       toast({
         title: "No company found",
@@ -171,51 +293,87 @@ export default function RiskAssessments() {
       return;
     }
 
-    const riskScore = data.likelihood * data.severity;
-    const riskLevel = getRiskLevel(riskScore);
-
     try {
+      // Calculate risk levels
+      const riskScoreBefore =
+        formData.probability_before * formData.extent_damage_before;
+      const riskScoreAfter =
+        formData.probability_after * formData.extent_damage_after;
+      const riskLevelBefore = getRiskLevel(riskScoreBefore);
+      const riskLevelAfter = getRiskLevel(riskScoreAfter);
+
+      // Insert risk assessment
       const { data: created, error } = await supabase
         .from("risk_assessments")
         .insert([
           {
-            title: data.title,
-            description: data.description,
-            risk_category_id: data.risk_category_id,
-            department_id: data.department_id,
-            likelihood: data.likelihood,
-            severity: data.severity,
-            mitigation_measures: data.mitigation_measures,
-            status: data.status,
-            assessment_date: data.assessment_date,
+            title: formData.title,
+            description: formData.description,
+            department_id: formData.department_id || null,
+            location_id: formData.location_id || null,
+            exposure_group_id: formData.exposure_group_id || null,
+            line_manager_id: formData.line_manager_id || null,
+            hazard_category: formData.hazard_category || null,
+            probability_before: formData.probability_before,
+            probability_after: formData.probability_after,
+            extent_damage_before: formData.extent_damage_before,
+            extent_damage_after: formData.extent_damage_after,
+            risk_level: riskLevelAfter,
+            risk_matrix_label: formData.risk_matrix_label || null,
+            mitigation_measures: formData.mitigation_measures || null,
+            notes: formData.notes || null,
+            assessment_date: formData.assessment_date,
+            document_paths:
+              uploadedDocuments.length > 0 ? uploadedDocuments : null,
+            approval_status: "draft",
+            status: "open",
             company_id: companyId,
-            // `risk_score` is computed in the database (generated column or trigger).
-            // Do not send client-side value to avoid "cannot insert a non-DEFAULT value" errors.
-            // risk_score: riskScore,
-            // risk_level may also be computed server-side; omit if DB enforces it.
-            risk_level: riskLevel,
           },
         ])
-        .select("id");
+        .select("id")
+        .single();
 
       if (error) {
         console.error("Risk create error:", error);
-        // Provide clearer guidance for RLS/permission errors
-        const isRLS =
-          String(error.message || "")
-            .toLowerCase()
-            .includes("row-level security") ||
-          String(error.message || "")
-            .toLowerCase()
-            .includes("permission denied");
         toast({
           title: "Error creating risk assessment",
-          description: isRLS
-            ? "Permission denied. Ensure your account has a company assigned and RLS policies allow inserts."
-            : error.message,
+          description: error.message,
           variant: "destructive",
         });
         return;
+      }
+
+      // Insert measures
+      if (
+        created &&
+        measures.length > 0 &&
+        measures[0].measure_building_block
+      ) {
+        const measuresData = measures
+          .filter((m) => m.measure_building_block)
+          .map((m) => ({
+            risk_assessment_id: created.id,
+            company_id: companyId,
+            measure_building_block: m.measure_building_block,
+            responsible_person: m.responsible_person || null,
+            due_date: m.due_date || null,
+            progress_status: m.progress_status || "not_started",
+            notes: m.notes || null,
+          }));
+
+        const { error: measuresError } = await supabase
+          .from("risk_assessment_measures")
+          .insert(measuresData);
+
+        if (measuresError) {
+          console.error("Measures create error:", measuresError);
+          toast({
+            title: "Warning",
+            description:
+              "Risk assessment created but some measures failed to save.",
+            variant: "destructive",
+          });
+        }
       }
 
       toast({
@@ -223,9 +381,8 @@ export default function RiskAssessments() {
         description: "Risk assessment created successfully",
       });
       setIsDialogOpen(false);
-      form.reset();
+      resetForm();
       fetchData();
-      console.debug("Created risk assessment: ", created);
     } catch (err: unknown) {
       console.error("Unexpected error creating risk assessment:", err);
       const e = err as { message?: string } | Error | null;
@@ -239,6 +396,36 @@ export default function RiskAssessments() {
     }
   };
 
+  const resetForm = () => {
+    setFormData({
+      title: "",
+      description: "",
+      department_id: "",
+      location_id: "",
+      exposure_group_id: "",
+      line_manager_id: "",
+      hazard_category: "",
+      probability_before: 3,
+      probability_after: 2,
+      extent_damage_before: 3,
+      extent_damage_after: 2,
+      risk_matrix_label: "",
+      mitigation_measures: "",
+      notes: "",
+      assessment_date: new Date().toISOString().split("T")[0],
+    });
+    setMeasures([
+      {
+        measure_building_block: "",
+        responsible_person: "",
+        due_date: "",
+        progress_status: "not_started",
+        notes: "",
+      },
+    ]);
+    setUploadedDocuments([]);
+  };
+
   const filteredRisks = risks.filter((risk) =>
     risk.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -250,6 +437,47 @@ export default function RiskAssessments() {
       </div>
     );
   }
+
+  const handleApproveRisk = async () => {
+    if (!selectedRisk) return;
+
+    try {
+      // Update approval status and add comment to notes if provided
+      const updateData: any = {
+        approval_status: "approved",
+      };
+
+      // Append approval comment to notes if provided
+      if (approvalComment) {
+        const existingNotes = selectedRisk.notes || "";
+        const approvalNote = `\n\n[Approval Comment - ${new Date().toLocaleDateString()}]: ${approvalComment}`;
+        updateData.notes = existingNotes + approvalNote;
+      }
+
+      const { error } = await supabase
+        .from("risk_assessments")
+        .update(updateData)
+        .eq("id", selectedRisk.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Risk assessment approved successfully",
+      });
+
+      setIsApprovalDialogOpen(false);
+      setApprovalComment("");
+      setSelectedRisk(null);
+      fetchData();
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
 
   const getRiskLevelColor = (level: string) => {
     switch (level) {
@@ -279,115 +507,180 @@ export default function RiskAssessments() {
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div>
-              <h1 className="text-xl font-bold">Risk Assessments</h1>
-              <p className="text-xs text-muted-foreground">GBU Management</p>
+              <h1 className="text-xl font-bold">{t("risks.title")}</h1>
+              <p className="text-xs text-muted-foreground">
+                {t("risks.subtitle")}
+              </p>
             </div>
           </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        <Card>
+        <Card className="border-0 shadow-xl">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Risk Assessments</CardTitle>
-                <CardDescription>
-                  Create and review risk assessments (GBU)
-                </CardDescription>
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg">
+                  <Shield className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-2xl">{t("risks.title")}</CardTitle>
+                  <CardDescription className="text-sm">
+                    {t("risks.subtitle")}
+                  </CardDescription>
+                </div>
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="w-4 h-4 mr-2" />
-                    New Assessment
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle>Create Risk Assessment</DialogTitle>
-                    <DialogDescription>
-                      Fill out the form below to create a new risk assessment
-                      for your company.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <Form {...form}>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  className="whitespace-nowrap"
+                  onClick={() => {
+                    toast({
+                      title:
+                        language === "de" ? "PDF exportieren" : "Export PDF",
+                      description:
+                        language === "de"
+                          ? "PDF-Export-Funktion kommt bald"
+                          : "PDF export functionality coming soon",
+                    });
+                  }}
+                >
+                  <FileDown className="w-4 h-4 mr-2" />
+                  {language === "de" ? "PDF Export" : "Export PDF"}
+                </Button>
+                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="whitespace-nowrap">
+                      <Plus className="w-4 h-4 mr-2" />
+                      {language === "de"
+                        ? "Neue Bewertung"
+                        : "New Risk Assessment"}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>{t("risks.new")}</DialogTitle>
+                      <DialogDescription>
+                        {t("risks.subtitle")}
+                      </DialogDescription>
+                    </DialogHeader>
+
                     <form
-                      onSubmit={form.handleSubmit(onSubmit)}
-                      className="space-y-4"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        onSubmit();
+                      }}
+                      className="space-y-6"
                     >
-                      <FormField
-                        control={form.control}
-                        name="title"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Title</FormLabel>
-                            <FormControl>
-                              <Input {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      {/* Step Indicator */}
+                      <div className="flex items-center justify-center gap-2 mb-6 pb-4 border-b">
+                        <Button
+                          type="button"
+                          variant={formStep === 1 ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setFormStep(1)}
+                        >
+                          {t("risks.step1")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formStep === 2 ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setFormStep(2)}
+                        >
+                          {t("risks.step2")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formStep === 3 ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setFormStep(3)}
+                        >
+                          {t("risks.step3")}
+                        </Button>
+                      </div>
 
-                      <FormField
-                        control={form.control}
-                        name="description"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Description</FormLabel>
-                            <FormControl>
-                              <Textarea {...field} rows={3} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      {/* Step 1: Basic Information */}
+                      {formStep === 1 && (
+                        <div className="space-y-4">
+                          <h3 className="font-semibold text-lg">
+                            {t("risks.basicInformation")}
+                          </h3>
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="risk_category_id"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Risk Category</FormLabel>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="title">
+                                {t("risks.riskTitle")} *
+                              </Label>
+                              <Input
+                                id="title"
+                                value={formData.title}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    title: e.target.value,
+                                  })
+                                }
+                                required
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="assessment_date">
+                                {t("risks.assessmentDate")} *
+                              </Label>
+                              <Input
+                                id="assessment_date"
+                                type="date"
+                                value={formData.assessment_date}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    assessment_date: e.target.value,
+                                  })
+                                }
+                                required
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="description">
+                              {t("risks.description")}
+                            </Label>
+                            <Textarea
+                              id="description"
+                              value={formData.description}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  description: e.target.value,
+                                })
+                              }
+                              rows={3}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="department_id">
+                                {t("risks.department")}
+                              </Label>
                               <Select
-                                onValueChange={field.onChange}
-                                value={field.value}
+                                value={formData.department_id}
+                                onValueChange={(val) =>
+                                  setFormData({
+                                    ...formData,
+                                    department_id: val,
+                                  })
+                                }
                               >
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select category" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {categories.map((cat) => (
-                                    <SelectItem key={cat.id} value={cat.id}>
-                                      {cat.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={form.control}
-                          name="department_id"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Department</FormLabel>
-                              <Select
-                                onValueChange={field.onChange}
-                                value={field.value}
-                              >
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select department" />
-                                  </SelectTrigger>
-                                </FormControl>
+                                <SelectTrigger id="department_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectDepartment")}
+                                  />
+                                </SelectTrigger>
                                 <SelectContent>
                                   {departments.map((dept) => (
                                     <SelectItem key={dept.id} value={dept.id}>
@@ -396,146 +689,715 @@ export default function RiskAssessments() {
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
+                            </div>
 
-                      <div className="grid grid-cols-3 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="likelihood"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Likelihood (1-5)</FormLabel>
+                            <div className="space-y-2">
+                              <Label htmlFor="location_id">
+                                {t("risks.location")}
+                              </Label>
                               <Select
+                                value={formData.location_id}
                                 onValueChange={(val) =>
-                                  field.onChange(parseInt(val))
+                                  setFormData({ ...formData, location_id: val })
                                 }
-                                value={field.value?.toString()}
                               >
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                </FormControl>
+                                <SelectTrigger id="location_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectLocation")}
+                                  />
+                                </SelectTrigger>
                                 <SelectContent>
-                                  {[1, 2, 3, 4, 5].map((val) => (
-                                    <SelectItem
-                                      key={val}
-                                      value={val.toString()}
-                                    >
-                                      {val}
+                                  {locations.map((loc) => (
+                                    <SelectItem key={loc.id} value={loc.id}>
+                                      {loc.name}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                            </div>
 
-                        <FormField
-                          control={form.control}
-                          name="severity"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Severity (1-5)</FormLabel>
+                            <div className="space-y-2">
+                              <Label htmlFor="exposure_group_id">
+                                {t("risks.exposureGroup")}
+                              </Label>
                               <Select
+                                value={formData.exposure_group_id}
                                 onValueChange={(val) =>
-                                  field.onChange(parseInt(val))
+                                  setFormData({
+                                    ...formData,
+                                    exposure_group_id: val,
+                                  })
                                 }
-                                value={field.value?.toString()}
                               >
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                </FormControl>
+                                <SelectTrigger id="exposure_group_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectExposureGroup")}
+                                  />
+                                </SelectTrigger>
                                 <SelectContent>
-                                  {[1, 2, 3, 4, 5].map((val) => (
-                                    <SelectItem
-                                      key={val}
-                                      value={val.toString()}
-                                    >
-                                      {val}
+                                  {exposureGroups.map((group) => (
+                                    <SelectItem key={group.id} value={group.id}>
+                                      {group.name}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                            </div>
 
-                        <div>
-                          <FormLabel>Risk Score</FormLabel>
-                          <div className="h-10 flex items-center justify-center rounded-md border bg-muted font-bold text-lg">
-                            {riskScore}
+                            <div className="space-y-2">
+                              <Label htmlFor="line_manager_id">
+                                {t("risks.lineManager")}
+                              </Label>
+                              <Select
+                                value={formData.line_manager_id}
+                                onValueChange={(val) =>
+                                  setFormData({
+                                    ...formData,
+                                    line_manager_id: val,
+                                  })
+                                }
+                              >
+                                <SelectTrigger id="line_manager_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectLineManager")}
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {employees.map((emp) => (
+                                    <SelectItem key={emp.id} value={emp.id}>
+                                      {emp.full_name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Level:{" "}
-                            <span className="font-medium capitalize">
-                              {getRiskLevel(riskScore)}
-                            </span>
-                          </p>
+
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              onClick={() => setFormStep(2)}
+                            >
+                              {t("risks.nextSlide")}
+                            </Button>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      <FormField
-                        control={form.control}
-                        name="mitigation_measures"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Mitigation Measures</FormLabel>
-                            <FormControl>
-                              <Textarea {...field} rows={3} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      {/* Step 2: Risk Assessment */}
+                      {formStep === 2 && (
+                        <div className="space-y-4">
+                          <h3 className="font-semibold text-lg">
+                            {t("risks.hazardAssessment")}
+                          </h3>
 
-                      <FormField
-                        control={form.control}
-                        name="assessment_date"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Assessment Date</FormLabel>
-                            <FormControl>
-                              <Input type="date" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                          <div className="space-y-2">
+                            <Label htmlFor="hazard_category">
+                              {t("risks.hazardCategory")}
+                            </Label>
+                            <Select
+                              value={formData.hazard_category}
+                              onValueChange={(val) =>
+                                setFormData({
+                                  ...formData,
+                                  hazard_category: val,
+                                })
+                              }
+                            >
+                              <SelectTrigger id="hazard_category">
+                                <SelectValue
+                                  placeholder={t("risks.selectHazardCategory")}
+                                />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {HAZARD_CATEGORIES.map((cat) => (
+                                  <SelectItem key={cat} value={cat}>
+                                    {cat}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
 
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => setIsDialogOpen(false)}
-                        >
-                          Cancel
-                        </Button>
-                        <Button type="submit">Create Assessment</Button>
-                      </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="description2">
+                              {t("risks.shortDescription")}
+                            </Label>
+                            <Textarea
+                              id="description2"
+                              value={formData.description}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  description: e.target.value,
+                                })
+                              }
+                              rows={2}
+                              placeholder={t(
+                                "risks.shortDescriptionPlaceholder"
+                              )}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-3 p-4 border rounded-lg bg-red-50">
+                              <h4 className="font-medium text-sm">
+                                {t("risks.primaBefore")}
+                              </h4>
+                              <div className="space-y-3">
+                                <div className="space-y-2">
+                                  <Label htmlFor="probability_before">
+                                    {t("risks.probabilityBefore")}
+                                  </Label>
+                                  <Select
+                                    value={formData.probability_before.toString()}
+                                    onValueChange={(val) =>
+                                      setFormData({
+                                        ...formData,
+                                        probability_before: parseInt(val),
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger id="probability_before">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {PROBABILITY_LABELS.map((item) => (
+                                        <SelectItem
+                                          key={item.value}
+                                          value={item.value.toString()}
+                                        >
+                                          {language === "de"
+                                            ? item.de
+                                            : item.en}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label htmlFor="extent_damage_before">
+                                    {t("risks.damageExtentBefore")}
+                                  </Label>
+                                  <Select
+                                    value={formData.extent_damage_before.toString()}
+                                    onValueChange={(val) =>
+                                      setFormData({
+                                        ...formData,
+                                        extent_damage_before: parseInt(val),
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger id="extent_damage_before">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {DAMAGE_EXTENT_LABELS.map((item) => (
+                                        <SelectItem
+                                          key={item.value}
+                                          value={item.value.toString()}
+                                        >
+                                          {language === "de"
+                                            ? item.de
+                                            : item.en}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="text-center p-3 bg-white rounded border mt-2">
+                                <p className="text-xs text-muted-foreground mb-1">
+                                  Risk Score (calculated)
+                                </p>
+                                <p className="text-3xl font-bold text-red-600">
+                                  {riskScoreBefore}
+                                </p>
+                                <Badge
+                                  variant={getRiskLevelColor(
+                                    getRiskLevel(riskScoreBefore)
+                                  )}
+                                  className="mt-2"
+                                >
+                                  {getRiskLevel(riskScoreBefore)}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            <div className="space-y-3 p-4 border rounded-lg bg-green-50">
+                              <h4 className="font-medium text-sm">
+                                {t("risks.postAfter")}
+                              </h4>
+                              <div className="space-y-3">
+                                <div className="space-y-2">
+                                  <Label htmlFor="probability_after">
+                                    {t("risks.probabilityAfter")}
+                                  </Label>
+                                  <Select
+                                    value={formData.probability_after.toString()}
+                                    onValueChange={(val) =>
+                                      setFormData({
+                                        ...formData,
+                                        probability_after: parseInt(val),
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger id="probability_after">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {PROBABILITY_LABELS.map((item) => (
+                                        <SelectItem
+                                          key={item.value}
+                                          value={item.value.toString()}
+                                        >
+                                          {language === "de"
+                                            ? item.de
+                                            : item.en}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label htmlFor="extent_damage_after">
+                                    {t("risks.damageExtentAfter")}
+                                  </Label>
+                                  <Select
+                                    value={formData.extent_damage_after.toString()}
+                                    onValueChange={(val) =>
+                                      setFormData({
+                                        ...formData,
+                                        extent_damage_after: parseInt(val),
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger id="extent_damage_after">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {DAMAGE_EXTENT_LABELS.map((item) => (
+                                        <SelectItem
+                                          key={item.value}
+                                          value={item.value.toString()}
+                                        >
+                                          {language === "de"
+                                            ? item.de
+                                            : item.en}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                              <div className="text-center p-3 bg-white rounded border mt-2">
+                                <p className="text-xs text-muted-foreground mb-1">
+                                  {t("risks.riskScoreCalculated")}
+                                </p>
+                                <p className="text-3xl font-bold text-green-600">
+                                  {riskScoreAfter}
+                                </p>
+                                <Badge
+                                  variant={getRiskLevelColor(
+                                    getRiskLevel(riskScoreAfter)
+                                  )}
+                                  className="mt-2"
+                                >
+                                  {getRiskLevel(riskScoreAfter)}
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-between mt-4">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => setFormStep(1)}
+                            >
+                              {t("risks.back")}
+                            </Button>
+                            <Button
+                              type="button"
+                              onClick={() => setFormStep(3)}
+                            >
+                              {t("risks.nextSlide")}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Step 3: Measures and Documents */}
+                      {formStep === 3 && (
+                        <div className="space-y-4">
+                          <h3 className="font-semibold text-lg">
+                            {t("risks.measures")}
+                          </h3>
+
+                          {/* Additional Information */}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="department_id">
+                                {t("risks.department")}
+                              </Label>
+                              <Select
+                                value={formData.department_id}
+                                onValueChange={(val) =>
+                                  setFormData({
+                                    ...formData,
+                                    department_id: val,
+                                  })
+                                }
+                              >
+                                <SelectTrigger id="department_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectDepartment")}
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {departments.map((dept) => (
+                                    <SelectItem key={dept.id} value={dept.id}>
+                                      {dept.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="location_id">
+                                {t("risks.location")}
+                              </Label>
+                              <Select
+                                value={formData.location_id}
+                                onValueChange={(val) =>
+                                  setFormData({ ...formData, location_id: val })
+                                }
+                              >
+                                <SelectTrigger id="location_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectLocation")}
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {locations.map((loc) => (
+                                    <SelectItem key={loc.id} value={loc.id}>
+                                      {loc.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="line_manager_id">
+                                {t("risks.responsiblePerson")}
+                              </Label>
+                              <Select
+                                value={formData.line_manager_id}
+                                onValueChange={(val) =>
+                                  setFormData({
+                                    ...formData,
+                                    line_manager_id: val,
+                                  })
+                                }
+                              >
+                                <SelectTrigger id="line_manager_id">
+                                  <SelectValue
+                                    placeholder={t("risks.selectManager")}
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {employees.map((emp) => (
+                                    <SelectItem key={emp.id} value={emp.id}>
+                                      {emp.full_name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="assessment_date">
+                                {t("risks.dueDate")}
+                              </Label>
+                              <Input
+                                id="assessment_date"
+                                type="date"
+                                value={formData.assessment_date}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    assessment_date: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+
+                          {/* Document Upload */}
+                          <div className="space-y-2 border-t pt-4">
+                            <Label>{t("risks.uploadDocuments")}</Label>
+                            <div className="border-2 border-dashed rounded-lg p-6 text-center">
+                              <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                              <p className="text-sm text-muted-foreground mb-2">
+                                {t("risks.chooseFile")}
+                              </p>
+                              <Input
+                                type="file"
+                                multiple
+                                className="max-w-xs mx-auto"
+                                onChange={(e) => {
+                                  if (e.target.files) {
+                                    const files = Array.from(
+                                      e.target.files
+                                    ).map((f) => f.name);
+                                    setUploadedDocuments(files);
+                                    toast({
+                                      title: "Files selected",
+                                      description: `${files.length} file(s) selected`,
+                                    });
+                                  }
+                                }}
+                              />
+                              {uploadedDocuments.length > 0 && (
+                                <div className="mt-2 text-sm">
+                                  <p className="font-medium">Selected files:</p>
+                                  {uploadedDocuments.map((doc, idx) => (
+                                    <p
+                                      key={idx}
+                                      className="text-muted-foreground"
+                                    >
+                                      {doc}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Measures Section */}
+                          <div className="space-y-4 border-t pt-4">
+                            <div className="flex items-center justify-between">
+                              <h3 className="font-semibold text-lg">
+                                {t("risks.addMeasure")}
+                              </h3>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  setMeasures([
+                                    ...measures,
+                                    {
+                                      measure_building_block: "",
+                                      responsible_person: "",
+                                      due_date: "",
+                                      progress_status: "not_started",
+                                      notes: "",
+                                    },
+                                  ])
+                                }
+                              >
+                                <Plus className="w-4 h-4 mr-1" />
+                                {t("risks.addMeasureButton")}
+                              </Button>
+                            </div>
+
+                            {measures.map((measure, index) => (
+                              <div
+                                key={index}
+                                className="p-4 border rounded-lg space-y-3 bg-muted/20"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-medium">
+                                    Measure {index + 1}
+                                  </span>
+                                  {measures.length > 1 && (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        setMeasures(
+                                          measures.filter((_, i) => i !== index)
+                                        )
+                                      }
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </Button>
+                                  )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="space-y-2">
+                                    <Label>Building Block</Label>
+                                    <Select
+                                      value={measure.measure_building_block}
+                                      onValueChange={(val) => {
+                                        const updated = [...measures];
+                                        updated[index].measure_building_block =
+                                          val;
+                                        setMeasures(updated);
+                                      }}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select building block" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {MEASURE_BUILDING_BLOCKS.map(
+                                          (block) => (
+                                            <SelectItem
+                                              key={block}
+                                              value={block}
+                                            >
+                                              {block}
+                                            </SelectItem>
+                                          )
+                                        )}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <Label>Responsible Person</Label>
+                                    <Select
+                                      value={measure.responsible_person}
+                                      onValueChange={(val) => {
+                                        const updated = [...measures];
+                                        updated[index].responsible_person = val;
+                                        setMeasures(updated);
+                                      }}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select responsible person" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {employees.map((emp) => (
+                                          <SelectItem
+                                            key={emp.id}
+                                            value={emp.id}
+                                          >
+                                            {emp.full_name}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <Label>Due Date</Label>
+                                    <Input
+                                      type="date"
+                                      value={measure.due_date}
+                                      onChange={(e) => {
+                                        const updated = [...measures];
+                                        updated[index].due_date =
+                                          e.target.value;
+                                        setMeasures(updated);
+                                      }}
+                                    />
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <Label>Progress Status</Label>
+                                    <Select
+                                      value={measure.progress_status}
+                                      onValueChange={(val) => {
+                                        const updated = [...measures];
+                                        updated[index].progress_status = val;
+                                        setMeasures(updated);
+                                      }}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="not_started">
+                                          Not Started
+                                        </SelectItem>
+                                        <SelectItem value="in_progress">
+                                          In Progress
+                                        </SelectItem>
+                                        <SelectItem value="completed">
+                                          Completed
+                                        </SelectItem>
+                                        <SelectItem value="blocked">
+                                          Blocked
+                                        </SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label>Notes</Label>
+                                  <Textarea
+                                    value={measure.notes || ""}
+                                    onChange={(e) => {
+                                      const updated = [...measures];
+                                      updated[index].notes = e.target.value;
+                                      setMeasures(updated);
+                                    }}
+                                    rows={2}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex justify-between mt-4">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => setFormStep(2)}
+                            >
+                              {t("risks.back")}
+                            </Button>
+                            <Button type="submit">
+                              <Save className="w-4 h-4 mr-2" />
+                              {t("common.create")}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {formStep !== 3 && (
+                        <div className="flex justify-end gap-2 border-t pt-4 opacity-50 pointer-events-none">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setIsDialogOpen(false);
+                              resetForm();
+                              setFormStep(1);
+                            }}
+                          >
+                            {t("common.cancel")}
+                          </Button>
+                          <Button type="submit" disabled>
+                            <Save className="w-4 h-4 mr-2" />
+                            {t("common.create")}
+                          </Button>
+                        </div>
+                      )}
                     </form>
-                  </Form>
-                </DialogContent>
-              </Dialog>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="mb-4">
+            <div className="mb-6">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5" />
                 <Input
-                  placeholder="Search assessments..."
+                  placeholder={t("risks.search")}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
+                  className="pl-12 h-12 border-2 focus:border-primary transition-colors"
                 />
               </div>
             </div>
@@ -544,57 +1406,137 @@ export default function RiskAssessments() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Risk Category</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead>Risk Level</TableHead>
-                    <TableHead>Risk Score</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Assessment Date</TableHead>
-                    <TableHead>Assessed By</TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de" ? "Risikotitel" : "Risk Title"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de" ? "Abteilung" : "Department"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de" ? "Standort" : "Location"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de" ? "Expo-Gruppe" : "Exposure Group"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de" ? "Gefahr" : "Hazard"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de"
+                        ? "Risiko Vorher/Nachher"
+                        : "Risk Before/After"}
+                    </TableHead>
+                    <TableHead>Matrix</TableHead>
+                    <TableHead>
+                      {language === "de" ? "Fortschritt" : "Progress"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de" ? "Genehmigung" : "Approval"}
+                    </TableHead>
+                    <TableHead className="whitespace-nowrap">
+                      {language === "de"
+                        ? "Bewertungsdatum"
+                        : "Assessment Date"}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredRisks.length === 0 ? (
                     <TableRow>
-                      <TableCell
-                        colSpan={8}
-                        className="text-center py-8 text-muted-foreground"
-                      >
-                        No risk assessments found
+                      <TableCell colSpan={10} className="text-center py-12">
+                        <div className="flex flex-col items-center justify-center">
+                          <Shield className="w-16 h-16 text-muted-foreground/20 mb-4" />
+                          <p className="text-lg font-medium text-muted-foreground mb-1">
+                            No risk assessments found
+                          </p>
+                          <p className="text-sm text-muted-foreground/60">
+                            Create your first risk assessment to get started
+                          </p>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ) : (
                     filteredRisks.map((risk) => (
-                      <TableRow key={risk.id}>
+                      <TableRow
+                        key={risk.id}
+                        className="hover:bg-muted/70 transition-all duration-200 border-b border-border/50 hover:shadow-sm group"
+                      >
                         <TableCell className="font-medium">
                           {risk.title}
                         </TableCell>
-                        <TableCell>
-                          {risk.risk_categories?.name || "-"}
-                        </TableCell>
                         <TableCell>{risk.departments?.name || "-"}</TableCell>
+                        <TableCell>{risk.locations?.name || "-"}</TableCell>
                         <TableCell>
-                          <Badge variant={getRiskLevelColor(risk.risk_level)}>
-                            {risk.risk_level}
-                          </Badge>
+                          {risk.exposure_groups?.name || "-"}
                         </TableCell>
                         <TableCell>
-                          <span className="font-medium">{risk.risk_score}</span>
+                          <span className="text-xs px-2 py-1 rounded bg-muted">
+                            {risk.hazard_category || "-"}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={getRiskLevelColor(
+                                getRiskLevel(risk.risk_score_before || 0)
+                              )}
+                              className="text-xs"
+                            >
+                              {risk.risk_score_before || 0}
+                            </Badge>
+                            <span className="text-muted-foreground">→</span>
+                            <Badge
+                              variant={getRiskLevelColor(
+                                getRiskLevel(risk.risk_score_after || 0)
+                              )}
+                              className="text-xs"
+                            >
+                              {risk.risk_score_after || 0}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedRisk(risk);
+                              setIsMatrixDialogOpen(true);
+                            }}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Grid3x3 className="w-4 h-4" />
+                          </Button>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Progress
+                              value={risk.progress || 0}
+                              className="w-16 h-2"
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              {risk.progress || 0}%
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell>
                           <Badge
                             variant={
-                              risk.status === "open" ? "default" : "secondary"
+                              risk.approval_status === "approved"
+                                ? "default"
+                                : risk.approval_status === "pending_approval"
+                                ? "secondary"
+                                : "outline"
                             }
+                            className="text-xs"
                           >
-                            {risk.status}
+                            {risk.approval_status === "approved" && (
+                              <Check className="w-3 h-3 mr-1" />
+                            )}
+                            {risk.approval_status || "draft"}
                           </Badge>
                         </TableCell>
                         <TableCell>{risk.assessment_date}</TableCell>
-                        <TableCell>
-                          {risk.employees?.full_name || "-"}
-                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -603,6 +1545,531 @@ export default function RiskAssessments() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Risk Matrix Dialog */}
+        <Dialog
+          open={isMatrixDialogOpen}
+          onOpenChange={(open) => {
+            setIsMatrixDialogOpen(open);
+            if (open && selectedRisk) {
+              setEditableNotes(selectedRisk.notes || "");
+            }
+          }}
+        >
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <DialogTitle>Risk Matrix - {selectedRisk?.title}</DialogTitle>
+                  <DialogDescription>
+                    Step-by-step: Analysis, Assessment, Measures, Revision
+                  </DialogDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    toast({
+                      title: "Export PDF",
+                      description: "Generating PDF report...",
+                    });
+                    // TODO: Implement actual PDF export functionality
+                    window.print();
+                  }}
+                >
+                  <FileDown className="w-4 h-4 mr-2" />
+                  Export PDF
+                </Button>
+              </div>
+            </DialogHeader>
+
+            {selectedRisk && (
+              <div className="space-y-6">
+                {/* The Progress of Measures */}
+                <div className="p-4 border rounded-lg bg-muted/30">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">
+                      The progress of measures
+                    </span>
+                    <Progress
+                      value={
+                        selectedRisk.measures &&
+                        selectedRisk.measures.length > 0
+                          ? (selectedRisk.measures.filter(
+                              (m: any) => m.progress_status === "completed"
+                            ).length /
+                              selectedRisk.measures.length) *
+                            100
+                          : 0
+                      }
+                      className="w-32 h-2"
+                    />
+                  </div>
+                  <span className="text-sm text-muted-foreground">
+                    {selectedRisk.measures && selectedRisk.measures.length > 0
+                      ? `${
+                          selectedRisk.measures.filter(
+                            (m: any) => m.progress_status === "completed"
+                          ).length
+                        } of ${
+                          selectedRisk.measures.length
+                        } measures completed (${Math.round(
+                          (selectedRisk.measures.filter(
+                            (m: any) => m.progress_status === "completed"
+                          ).length /
+                            selectedRisk.measures.length) *
+                            100
+                        )}%)`
+                      : "No measures defined"}
+                  </span>
+                </div>
+
+                {/* Risk Matrices */}
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Before Mitigation */}
+                  <div>
+                    <h4 className="font-semibold mb-3">
+                      PRIMA (before Mitigation)
+                    </h4>
+                    <div className="space-y-2 mb-3 text-sm">
+                      <div>
+                        P x Schadensausmaß | X = Eintrittswahrscheinlichkeit
+                      </div>
+                      <div className="font-medium">
+                        Harm: PRIMA P:{selectedRisk.probability_before || 0} |
+                        POST P:{selectedRisk.probability_after || 0}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1">
+                      {[5, 4, 3, 2, 1].map((prob) => (
+                        <div key={`before-${prob}`} className="contents">
+                          {[1, 2, 3, 4, 5].map((damage) => {
+                            const score = prob * damage;
+                            const isSelected =
+                              prob === selectedRisk.probability_before &&
+                              damage === selectedRisk.extent_damage_before;
+                            return (
+                              <div
+                                key={`${prob}-${damage}`}
+                                className={`aspect-square flex items-center justify-center text-xs font-medium ${
+                                  score >= 15
+                                    ? "bg-red-500 text-white"
+                                    : score >= 8
+                                    ? "bg-orange-400 text-white"
+                                    : score >= 4
+                                    ? "bg-yellow-400 text-black"
+                                    : "bg-green-400 text-black"
+                                } ${isSelected ? "ring-4 ring-blue-500" : ""}`}
+                              >
+                                {isSelected && "●"}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between mt-2 text-xs">
+                      <span>Y = Schadensausmaß</span>
+                    </div>
+                  </div>
+
+                  {/* After Mitigation */}
+                  <div>
+                    <h4 className="font-semibold mb-3">
+                      POST (after Mitigation)
+                    </h4>
+                    <div className="space-y-2 mb-3 text-sm">
+                      <div>
+                        P x Schadensausmaß | X = Eintrittswahrscheinlichkeit
+                      </div>
+                      <div className="font-medium">
+                        Harm: PRIMA P:{selectedRisk.probability_before || 0} |
+                        POST P:{selectedRisk.probability_after || 0}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1">
+                      {[5, 4, 3, 2, 1].map((prob) => (
+                        <div key={`after-${prob}`} className="contents">
+                          {[1, 2, 3, 4, 5].map((damage) => {
+                            const score = prob * damage;
+                            const isSelected =
+                              prob === selectedRisk.probability_after &&
+                              damage === selectedRisk.extent_damage_after;
+                            return (
+                              <div
+                                key={`${prob}-${damage}`}
+                                className={`aspect-square flex items-center justify-center text-xs font-medium ${
+                                  score >= 15
+                                    ? "bg-red-500 text-white"
+                                    : score >= 8
+                                    ? "bg-orange-400 text-white"
+                                    : score >= 4
+                                    ? "bg-yellow-400 text-black"
+                                    : "bg-green-400 text-black"
+                                } ${isSelected ? "ring-4 ring-blue-500" : ""}`}
+                              >
+                                {isSelected && "●"}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Risk Legend */}
+                <div className="flex gap-4 text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-green-400"></div>
+                    <span>Low</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-yellow-400"></div>
+                    <span>Medium</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-orange-400"></div>
+                    <span>High</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 bg-red-500"></div>
+                    <span>Critical</span>
+                  </div>
+                </div>
+
+                {/* Hazards Section */}
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Hazards</h4>
+                  <div className="p-3 border rounded bg-muted/20">
+                    <div className="text-sm">
+                      <span className="font-medium">Category: </span>
+                      {selectedRisk.hazard_category}
+                    </div>
+                    {selectedRisk.description && (
+                      <div className="mt-2 text-sm text-muted-foreground">
+                        {selectedRisk.description}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notes Section - Editable */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold">Notes</h4>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        if (!selectedRisk) return;
+                        const { error } = await supabase
+                          .from("risk_assessments")
+                          .update({ notes: editableNotes })
+                          .eq("id", selectedRisk.id);
+
+                        if (error) {
+                          toast({
+                            title: "Error",
+                            description: "Failed to save notes",
+                            variant: "destructive",
+                          });
+                        } else {
+                          toast({
+                            title: "Success",
+                            description: "Notes saved successfully",
+                          });
+                          fetchData();
+                        }
+                      }}
+                    >
+                      <Save className="w-4 h-4 mr-2" />
+                      Save Notes
+                    </Button>
+                  </div>
+                  <Textarea
+                    placeholder="Add notes about this risk assessment..."
+                    value={editableNotes}
+                    onChange={(e) => setEditableNotes(e.target.value)}
+                    rows={4}
+                    className="w-full"
+                  />
+                </div>
+
+                {/* Measures Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold">Measures for this Risk</h4>
+                    <Badge variant="secondary" className="text-xs">
+                      {selectedRisk.measures?.length || 0} Measure
+                      {selectedRisk.measures?.length !== 1 ? "s" : ""}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Track implementation progress of control measures. Update
+                    status to monitor completion.
+                  </p>
+
+                  <div className="space-y-3">
+                    {selectedRisk.measures &&
+                    selectedRisk.measures.length > 0 ? (
+                      selectedRisk.measures.map(
+                        (measure: any, index: number) => (
+                          <div
+                            key={index}
+                            className="p-4 border rounded-lg bg-gradient-to-br from-background to-muted/20 hover:shadow-md transition-all"
+                          >
+                            {/* Header with Measure Type and Status Badge */}
+                            <div className="flex items-start justify-between mb-3 gap-2">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs font-normal"
+                                  >
+                                    #{index + 1}
+                                  </Badge>
+                                  <span className="font-semibold text-sm">
+                                    {measure.measure_building_block}
+                                  </span>
+                                </div>
+                              </div>
+                              <Badge
+                                variant={
+                                  measure.progress_status === "completed"
+                                    ? "default"
+                                    : measure.progress_status === "in_progress"
+                                    ? "secondary"
+                                    : "outline"
+                                }
+                                className="text-xs shrink-0"
+                              >
+                                {measure.progress_status === "completed" &&
+                                  "✓ "}
+                                {measure.progress_status === "not_started" &&
+                                  "○ "}
+                                {measure.progress_status === "in_progress" &&
+                                  "◐ "}
+                                {measure.progress_status === "completed"
+                                  ? "Completed"
+                                  : measure.progress_status === "in_progress"
+                                  ? "In Progress"
+                                  : "Not Started"}
+                              </Badge>
+                            </div>
+
+                            {/* Progress Status Buttons */}
+                            <div className="flex gap-2 mb-3 flex-wrap">
+                              <Button
+                                size="sm"
+                                variant={
+                                  measure.progress_status === "not_started"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                className="text-xs h-8"
+                                onClick={async () => {
+                                  const { error } = await supabase
+                                    .from("risk_assessment_measures")
+                                    .update({ progress_status: "not_started" })
+                                    .eq("id", measure.id);
+                                  if (!error) {
+                                    toast({
+                                      title: "Status updated",
+                                      description:
+                                        "Measure marked as Not Started",
+                                    });
+                                    fetchData();
+                                  }
+                                }}
+                              >
+                                ○ Offen
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={
+                                  measure.progress_status === "in_progress"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                className="text-xs h-8"
+                                onClick={async () => {
+                                  const { error } = await supabase
+                                    .from("risk_assessment_measures")
+                                    .update({ progress_status: "in_progress" })
+                                    .eq("id", measure.id);
+                                  if (!error) {
+                                    toast({
+                                      title: "Status updated",
+                                      description:
+                                        "Measure marked as In Progress",
+                                    });
+                                    fetchData();
+                                  }
+                                }}
+                              >
+                                ◐ In Arbeit
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant={
+                                  measure.progress_status === "completed"
+                                    ? "default"
+                                    : "outline"
+                                }
+                                className="text-xs h-8"
+                                onClick={async () => {
+                                  const { error } = await supabase
+                                    .from("risk_assessment_measures")
+                                    .update({ progress_status: "completed" })
+                                    .eq("id", measure.id);
+                                  if (!error) {
+                                    toast({
+                                      title: "Status updated",
+                                      description:
+                                        "Measure marked as Completed",
+                                    });
+                                    fetchData();
+                                  }
+                                }}
+                              >
+                                ✓ Erledigt
+                              </Button>
+                            </div>
+
+                            {/* Measure Details Grid */}
+                            <div className="grid grid-cols-2 gap-3 text-xs mb-3 p-3 bg-muted/30 rounded border">
+                              <div>
+                                <span className="font-medium text-muted-foreground">
+                                  Responsible:
+                                </span>
+                                <div className="mt-1 font-medium">
+                                  {measure.employees?.full_name ||
+                                    measure.responsible_person_name ||
+                                    measure.responsible_person ||
+                                    "Not assigned"}
+                                </div>
+                              </div>
+                              <div>
+                                <span className="font-medium text-muted-foreground">
+                                  Due Date:
+                                </span>
+                                <div className="mt-1 font-medium">
+                                  {measure.due_date
+                                    ? new Date(
+                                        measure.due_date
+                                      ).toLocaleDateString()
+                                    : "No deadline"}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Notes Section */}
+                            {measure.notes && (
+                              <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded">
+                                <div className="flex items-start gap-2">
+                                  <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                                  <div className="flex-1">
+                                    <span className="font-medium text-xs text-blue-900 dark:text-blue-100">
+                                      Notes:
+                                    </span>
+                                    <p className="text-xs text-blue-800 dark:text-blue-200 mt-1">
+                                      {measure.notes}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <div className="text-center py-8 border-2 border-dashed rounded-lg bg-muted/10">
+                        <AlertOctagon className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
+                        <p className="text-sm font-medium text-muted-foreground mb-1">
+                          No measures defined yet
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Measures are added when creating the risk assessment
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Approve Button */}
+                {selectedRisk.approval_status !== "approved" && (
+                  <div className="pt-4 border-t">
+                    <Button
+                      onClick={() => {
+                        setIsMatrixDialogOpen(false);
+                        setIsApprovalDialogOpen(true);
+                      }}
+                      className="w-full"
+                    >
+                      <Check className="w-4 h-4 mr-2" />
+                      Approve Risk Assessment
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setIsMatrixDialogOpen(false)}
+              >
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Approval Dialog */}
+        <Dialog
+          open={isApprovalDialogOpen}
+          onOpenChange={setIsApprovalDialogOpen}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Approve Risk Assessment</DialogTitle>
+              <DialogDescription>
+                Leave an optional comment and approve this risk assessment
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="approval-comment">Comment (optional)</Label>
+                <Textarea
+                  id="approval-comment"
+                  placeholder="Add your approval comment here..."
+                  value={approvalComment}
+                  onChange={(e) => setApprovalComment(e.target.value)}
+                  rows={4}
+                  className="mt-2"
+                />
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsApprovalDialogOpen(false);
+                  setApprovalComment("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleApproveRisk}>
+                <Check className="w-4 h-4 mr-2" />
+                Approve
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );

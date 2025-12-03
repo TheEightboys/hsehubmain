@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLanguage } from "@/contexts/LanguageContext";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 // Removed unused import for Tables
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -20,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import {
   Table,
   TableBody,
@@ -48,7 +51,19 @@ import {
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  Plus,
+  Search,
+  CheckCircle,
+  XCircle,
+  Filter,
+  Users,
+  ClipboardList,
+  StickyNote,
+  Trash2,
+  Save,
+} from "lucide-react";
 import { RefreshAuthButton } from "@/components/RefreshAuthButton";
 
 interface Employee {
@@ -66,6 +81,7 @@ interface Employee {
 
 export default function Employees() {
   const { companyId, userRole, loading, user } = useAuth();
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -82,13 +98,28 @@ export default function Employees() {
     email: "",
     hire_date: "",
     department_id: "",
-    job_role: "",
+    job_role_id: "",
   });
+
+  // Tasks and Notes dialog states
+  const [isTasksDialogOpen, setIsTasksDialogOpen] = useState(false);
+  const [isNotesDialogOpen, setIsNotesDialogOpen] = useState(false);
+  const [selectedEmployeeForAction, setSelectedEmployeeForAction] =
+    useState<Employee | null>(null);
+  const [employeeTasks, setEmployeeTasks] = useState<any[]>([]);
+  const [employeeNotes, setEmployeeNotes] = useState<any[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newNote, setNewNote] = useState("");
+  const [showMentionDropdown, setShowMentionDropdown] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState("");
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
 
   // Filters
   const [filterActive, setFilterActive] = useState<string>("all");
   const [filterDepartment, setFilterDepartment] = useState<string>("all");
   const [departments, setDepartments] = useState<any[]>([]);
+  const [jobRoles, setJobRoles] = useState<any[]>([]);
 
   useEffect(() => {
     // Debug logging
@@ -108,6 +139,7 @@ export default function Employees() {
     if (companyId) {
       fetchEmployees();
       fetchDepartments();
+      fetchJobRoles();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, loading, user, navigate]);
@@ -121,6 +153,18 @@ export default function Employees() {
 
     if (!error && data) {
       setDepartments(data);
+    }
+  };
+
+  const fetchJobRoles = async () => {
+    if (!companyId) return;
+    const { data, error } = await supabase
+      .from("job_roles")
+      .select("id, title")
+      .eq("company_id", companyId);
+
+    if (!error && data) {
+      setJobRoles(data);
     }
   };
 
@@ -140,7 +184,7 @@ export default function Employees() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      toast.error("Failed to load employees");
+      toast.error(t("employees.loadError"));
       console.error(error);
     } else {
       setEmployees((data as Employee[]) || []);
@@ -157,9 +201,7 @@ export default function Employees() {
     });
 
     if (!companyId) {
-      toast.error(
-        "No company ID found. You need to be assigned to a company first."
-      );
+      toast.error(t("employees.noCompanyId"));
       console.error("Missing companyId. User:", user?.email, "Role:", userRole);
       console.error(
         "Please check user_roles table in Supabase for user_id:",
@@ -170,42 +212,6 @@ export default function Employees() {
 
     setIsSubmitting(true);
     try {
-      // If job role is provided, try to find or create it
-      let jobRoleId: string | null = null;
-      if (formData.job_role && formData.job_role.trim()) {
-        const jobRoleTitle = formData.job_role.trim();
-
-        // Check if job role exists
-        const { data: existingRole } = await supabase
-          .from("job_roles")
-          .select("id")
-          .eq("company_id", companyId)
-          .eq("title", jobRoleTitle)
-          .maybeSingle();
-
-        if (existingRole) {
-          jobRoleId = existingRole.id;
-        } else {
-          // Create new job role
-          const { data: newRole, error: roleError } = await supabase
-            .from("job_roles")
-            .insert({
-              company_id: companyId,
-              title: jobRoleTitle,
-            })
-            .select("id")
-            .single();
-
-          if (roleError) {
-            console.error("Error creating job role:", roleError);
-            toast.error("Failed to create job role: " + roleError.message);
-            return;
-          }
-
-          jobRoleId = newRole.id;
-        }
-      }
-
       // Insert employee (combine first_name and last_name into full_name for DB)
       const fullName = `${formData.first_name.trim()} ${formData.last_name.trim()}`;
 
@@ -214,23 +220,23 @@ export default function Employees() {
         full_name: fullName,
         email: formData.email || null,
         hire_date: formData.hire_date || null,
-        job_role_id: jobRoleId,
+        job_role_id: formData.job_role_id || null,
         department_id: formData.department_id || null,
         exposure_group_id: null,
         is_active: true,
         company_id: companyId,
-      });
+      } as any);
 
       if (error) {
         const details =
           (error && (error.message || (error as any).details)) ||
           "Unknown error";
-        toast.error("Failed to add employee: " + details);
+        toast.error(t("employees.addError") + ": " + details);
         console.error("Add employee error:", error);
         return;
       }
 
-      toast.success("Employee added successfully");
+      toast.success(t("employees.addSuccess"));
       setIsDialogOpen(false);
       setFormData({
         employee_number: "",
@@ -239,16 +245,349 @@ export default function Employees() {
         email: "",
         hire_date: "",
         department_id: "",
-        job_role: "",
+        job_role_id: "",
       });
       fetchEmployees();
       return data;
     } catch (err) {
       console.error("Unexpected error adding employee:", err);
-      toast.error("Failed to add employee");
+      toast.error(t("employees.addError"));
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const fetchEmployeeTasks = async (employeeId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("tasks")
+        .select("*")
+        .eq("assigned_to", employeeId)
+        .order("due_date", { ascending: true });
+
+      if (error) throw error;
+      setEmployeeTasks(data || []);
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      toast.error("Failed to load tasks");
+    }
+  };
+
+  const fetchEmployeeNotes = async (employeeId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select("notes")
+        .eq("id", employeeId)
+        .single();
+
+      if (error) throw error;
+
+      let parsedNotes: any[] = [];
+      if (data?.notes) {
+        try {
+          if (data.notes.startsWith("[") || data.notes.startsWith("{")) {
+            parsedNotes = JSON.parse(data.notes);
+            if (!Array.isArray(parsedNotes)) parsedNotes = [];
+          }
+        } catch (e) {
+          console.error("Error parsing notes:", e);
+        }
+      }
+      setEmployeeNotes(parsedNotes);
+    } catch (error) {
+      console.error("Error fetching notes:", error);
+      toast.error("Failed to load notes");
+    }
+  };
+
+  const handleCreateTask = async () => {
+    if (!newTaskTitle.trim()) return;
+
+    try {
+      // Extract employee mentions from task title - improved regex to capture full names with spaces
+      const mentionRegex = /@([^\s@]+(?:\s+[^\s@]+)*?)(?=\s|$|@)/g;
+      const mentions = [];
+      let match;
+      while ((match = mentionRegex.exec(newTaskTitle)) !== null) {
+        mentions.push(match[1].trim());
+      }
+
+      // Find employees by mentioned names (exact match only)
+      const mentionedEmployees = employees.filter((emp) =>
+        mentions.some((mention) => {
+          const empNameLower = emp.full_name.toLowerCase();
+          const mentionLower = mention.toLowerCase();
+          return empNameLower === mentionLower;
+        })
+      );
+
+      if (mentionedEmployees.length === 0) {
+        toast.error("Please mention at least one employee using @");
+        return;
+      }
+
+      // Remove @ mentions from task title and keep only the clean text
+      const cleanTaskTitle = newTaskTitle
+        .replace(/@[^\s@]+(?:\s+[^\s@]+)*?(?=\s|$|@)/g, "")
+        .trim();
+
+      // Create tasks for each mentioned employee
+      const taskPromises = mentionedEmployees.map((emp) =>
+        supabase
+          .from("tasks")
+          .insert({
+            title: cleanTaskTitle,
+            assigned_to: emp.id,
+            company_id: companyId,
+            status: "pending",
+            priority: "medium",
+          } as any)
+          .select()
+          .single()
+      );
+
+      const results = await Promise.all(taskPromises);
+      const errors = results.filter((r) => r.error);
+
+      if (errors.length > 0) {
+        console.error("Some tasks failed:", errors);
+        toast.error("Some tasks failed to create");
+      } else {
+        const createdTasks = results.map((r) => r.data).filter(Boolean);
+        setEmployeeTasks([...createdTasks, ...employeeTasks]);
+        setNewTaskTitle("");
+        setShowMentionDropdown(false);
+        toast.success(
+          `Task assigned to ${mentionedEmployees.length} employee(s)`
+        );
+      }
+    } catch (error) {
+      console.error("Error creating task:", error);
+      toast.error("Failed to create task");
+    }
+  };
+
+  const handleToggleTaskStatus = async (task: any) => {
+    const newStatus = task.status === "completed" ? "pending" : "completed";
+    try {
+      const { error } = await supabase
+        .from("tasks")
+        .update({ status: newStatus })
+        .eq("id", task.id);
+
+      if (error) throw error;
+
+      setEmployeeTasks(
+        employeeTasks.map((t) =>
+          t.id === task.id ? { ...t, status: newStatus } : t
+        )
+      );
+      toast.success(`Task marked as ${newStatus}`);
+    } catch (error) {
+      console.error("Error updating task:", error);
+      toast.error("Failed to update task");
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!newNote.trim()) return;
+
+    try {
+      // Extract employee mentions from note - improved regex to capture full names with spaces
+      const mentionRegex = /@([^\s@]+(?:\s+[^\s@]+)*?)(?=\s|$|@)/g;
+      const mentions = [];
+      let match;
+      while ((match = mentionRegex.exec(newNote)) !== null) {
+        mentions.push(match[1].trim());
+      }
+
+      // Find employees by mentioned names (exact match only)
+      const mentionedEmployees = employees.filter((emp) =>
+        mentions.some((mention) => {
+          const empNameLower = emp.full_name.toLowerCase();
+          const mentionLower = mention.toLowerCase();
+          return empNameLower === mentionLower;
+        })
+      );
+
+      if (mentionedEmployees.length === 0) {
+        toast.error("Please mention at least one employee using @");
+        return;
+      }
+
+      // Remove @ mentions from note content and keep only the clean text
+      const cleanNoteContent = newNote
+        .replace(/@[^\s@]+(?:\s+[^\s@]+)*?(?=\s|$|@)/g, "")
+        .trim();
+
+      // Add employee names list at the bottom
+      const employeeNames = mentionedEmployees
+        .map((emp) => emp.full_name)
+        .join(", ");
+      const noteWithEmployees = `${cleanNoteContent}\n\n[Assigned to: ${employeeNames}]`;
+
+      const newNoteObj = {
+        id: Date.now().toString(),
+        content: noteWithEmployees,
+        author: "Current User",
+        date: new Date().toISOString(),
+        replies: [],
+      };
+
+      // Add note to each mentioned employee
+      const notePromises = mentionedEmployees.map(async (emp) => {
+        // Fetch current notes
+        const { data: empData } = await supabase
+          .from("employees")
+          .select("notes")
+          .eq("id", emp.id)
+          .single();
+
+        let existingNotes: any[] = [];
+        if (empData?.notes) {
+          try {
+            if (
+              empData.notes.startsWith("[") ||
+              empData.notes.startsWith("{")
+            ) {
+              existingNotes = JSON.parse(empData.notes);
+              if (!Array.isArray(existingNotes)) existingNotes = [];
+            }
+          } catch (e) {
+            console.error("Error parsing notes:", e);
+          }
+        }
+
+        const updatedNotes = [...existingNotes, newNoteObj];
+        const updatedNotesString = JSON.stringify(updatedNotes);
+
+        return supabase
+          .from("employees")
+          .update({ notes: updatedNotesString } as any)
+          .eq("id", emp.id);
+      });
+
+      const results = await Promise.all(notePromises);
+      const errors = results.filter((r) => r.error);
+
+      if (errors.length > 0) {
+        console.error("Some notes failed:", errors);
+        toast.error("Some notes failed to save");
+      } else {
+        setEmployeeNotes([newNoteObj, ...employeeNotes]);
+        setNewNote("");
+        setShowMentionDropdown(false);
+        toast.success(`Note added to ${mentionedEmployees.length} employee(s)`);
+      }
+    } catch (error) {
+      console.error("Error saving note:", error);
+      toast.error("Failed to save note");
+    }
+  };
+
+  const handleDeleteNote = async (noteId: string) => {
+    if (!selectedEmployeeForAction) return;
+
+    try {
+      const updatedNotes = employeeNotes.filter((note) => note.id !== noteId);
+      const updatedNotesString = JSON.stringify(updatedNotes);
+
+      const { error } = await (supabase as any)
+        .from("employees")
+        .update({ notes: updatedNotesString })
+        .eq("id", selectedEmployeeForAction.id);
+
+      if (error) throw error;
+
+      setEmployeeNotes(updatedNotes);
+      toast.success("Note deleted successfully");
+    } catch (error) {
+      console.error("Error deleting note:", error);
+      toast.error("Failed to delete note");
+    }
+  };
+
+  const handleNoteChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart;
+    setNewNote(value);
+    setCursorPosition(cursorPos);
+
+    const textBeforeCursor = value.substring(0, cursorPos);
+    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+
+    if (lastAtIndex !== -1) {
+      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+      if (!textAfterAt.includes(" ") && textAfterAt.length >= 0) {
+        setMentionSearch(textAfterAt);
+        setShowMentionDropdown(true);
+      } else {
+        setShowMentionDropdown(false);
+      }
+    } else {
+      setShowMentionDropdown(false);
+    }
+  };
+
+  const handleMentionSelect = (employeeName: string) => {
+    const textBeforeCursor = newNote.substring(0, cursorPosition);
+    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+    const textBeforeAt = newNote.substring(0, lastAtIndex);
+    const textAfterCursor = newNote.substring(cursorPosition);
+
+    const newText = `${textBeforeAt}@${employeeName} ${textAfterCursor}`;
+    setNewNote(newText);
+    setShowMentionDropdown(false);
+  };
+
+  const filteredEmployeesForMention = employees.filter((emp) =>
+    emp.full_name.toLowerCase().includes(mentionSearch.toLowerCase())
+  );
+
+  // Render text with @ mentions as styled badges
+  const renderTextWithMentions = (text: string) => {
+    const mentionRegex = /(@[^\s@]+(?:\s+[^\s@]+)*?)(?=\s|$|@)/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = mentionRegex.exec(text)) !== null) {
+      // Add text before mention
+      if (match.index > lastIndex) {
+        parts.push({
+          type: "text",
+          content: text.substring(lastIndex, match.index),
+        });
+      }
+      // Add mention (match[1] includes the @)
+      parts.push({
+        type: "mention",
+        content: match[1].substring(1), // Remove @ for display
+      });
+      lastIndex = match.index + match[0].length;
+    }
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push({
+        type: "text",
+        content: text.substring(lastIndex),
+      });
+    }
+
+    return parts.map((part, index) =>
+      part.type === "mention" ? (
+        <span
+          key={index}
+          className="inline-flex items-center gap-1 px-2 py-0.5 mx-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium border border-blue-200 dark:border-blue-800"
+        >
+          <Users className="w-3 h-3" />
+          {part.content}
+        </span>
+      ) : (
+        <span key={index}>{part.content}</span>
+      )
+    );
   };
 
   const handleViewEmployee = async (employee: Employee) => {
@@ -296,7 +635,7 @@ export default function Employees() {
         <div className="mb-6 flex items-center gap-4">
           <Button variant="ghost" onClick={() => navigate("/dashboard")}>
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
+            {t("common.back")}
           </Button>
         </div>
 
@@ -348,174 +687,284 @@ export default function Employees() {
           </Card>
         )}
 
-        <Card>
+        <Card className="border-0 shadow-xl">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Employees</CardTitle>
-                <CardDescription>
-                  Manage your company's employee records
-                </CardDescription>
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
+                  <Users className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-2xl">
+                    {t("employees.title")}
+                  </CardTitle>
+                  <CardDescription>
+                    {t("employees.description")}
+                  </CardDescription>
+                </div>
               </div>
-              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Employee
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                  <DialogHeader>
-                    <DialogTitle>Add New Employee</DialogTitle>
-                    <DialogDescription>
-                      Enter employee details below
-                    </DialogDescription>
-                  </DialogHeader>
-                  <form onSubmit={handleSubmit} className="space-y-4 p-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="employee_number">Employee Number *</Label>
-                      <Input
-                        id="employee_number"
-                        value={formData.employee_number}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            employee_number: e.target.value,
-                          })
-                        }
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="first_name">First Name *</Label>
-                      <Input
-                        id="first_name"
-                        value={formData.first_name}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            first_name: e.target.value,
-                          })
-                        }
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="last_name">Last Name *</Label>
-                      <Input
-                        id="last_name"
-                        value={formData.last_name}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            last_name: e.target.value,
-                          })
-                        }
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email (Optional)</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={formData.email}
-                        onChange={(e) =>
-                          setFormData({ ...formData, email: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="job_role">Job Role</Label>
-                      <Input
-                        id="job_role"
-                        placeholder="Enter job role (e.g., Safety Officer)"
-                        value={formData.job_role}
-                        onChange={(e) =>
-                          setFormData({ ...formData, job_role: e.target.value })
-                        }
-                      />
-                    </div>
+              <div className="flex gap-2">
+                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button>
+                      <Plus className="w-4 h-4 mr-2" />
+                      {t("employees.addEmployee")}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>{t("employees.addNew")}</DialogTitle>
+                      <DialogDescription>
+                        {t("employees.enterDetails")}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4 p-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="employee_number">
+                          {t("employees.employeeNumber")} *
+                        </Label>
+                        <Input
+                          id="employee_number"
+                          className="h-11 border-2 focus:border-primary transition-colors"
+                          value={formData.employee_number}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              employee_number: e.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="first_name">
+                          {t("employees.firstName")} *
+                        </Label>
+                        <Input
+                          id="first_name"
+                          className="h-11 border-2 focus:border-primary transition-colors"
+                          value={formData.first_name}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              first_name: e.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="last_name">
+                          {t("employees.lastName")} *
+                        </Label>
+                        <Input
+                          id="last_name"
+                          className="h-11 border-2 focus:border-primary transition-colors"
+                          value={formData.last_name}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              last_name: e.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="email">
+                          {t("employees.emailOptional")}
+                        </Label>
+                        <Input
+                          id="email"
+                          type="email"
+                          className="h-11 border-2 focus:border-primary transition-colors"
+                          value={formData.email}
+                          onChange={(e) =>
+                            setFormData({ ...formData, email: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="job_role">
+                          {t("employees.jobRole")}
+                        </Label>
+                        <Combobox
+                          options={jobRoles.map((role) => ({
+                            value: role.id,
+                            label: role.title,
+                          }))}
+                          value={formData.job_role_id}
+                          onValueChange={(value) =>
+                            setFormData({ ...formData, job_role_id: value })
+                          }
+                          placeholder={t("employees.jobRolePlaceholder")}
+                          searchPlaceholder="Search or type to create..."
+                          emptyText="No job role found."
+                          allowCustom={true}
+                          onCreateCustom={async (customRole) => {
+                            if (!companyId) return;
+                            try {
+                              const { data, error } = await (supabase as any)
+                                .from("job_roles")
+                                .insert({
+                                  title: customRole,
+                                  company_id: companyId,
+                                })
+                                .select()
+                                .single();
 
-                    <div className="space-y-2">
-                      <Label htmlFor="department">Department</Label>
-                      <Select
-                        value={formData.department_id}
-                        onValueChange={(value) =>
-                          setFormData({ ...formData, department_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select department" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {departments.map((dept) => (
-                            <SelectItem key={dept.id} value={dept.id}>
-                              {dept.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                              if (error) throw error;
 
-                    <div className="space-y-2">
-                      <Label>Hire Date</Label>
-                      <Input
-                        type="date"
-                        value={formData.hire_date}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            hire_date: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
+                              if (data) {
+                                setFormData({
+                                  ...formData,
+                                  job_role_id: (data as any).id,
+                                });
+                                await fetchJobRoles();
+                                toast.success(
+                                  `Job role "${customRole}" created`
+                                );
+                              }
+                            } catch (error) {
+                              console.error("Error creating job role:", error);
+                              toast.error("Failed to create job role");
+                            }
+                          }}
+                        />
+                      </div>
 
-                    <DialogFooter className="pt-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setIsDialogOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={isSubmitting}>
-                        {isSubmitting ? "Adding..." : "Add Employee"}
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
+                      <div className="space-y-2">
+                        <Label htmlFor="department">
+                          {t("employees.department")}
+                        </Label>
+                        <Combobox
+                          options={departments.map((dept) => ({
+                            value: dept.id,
+                            label: dept.name,
+                          }))}
+                          value={formData.department_id}
+                          onValueChange={(value) =>
+                            setFormData({ ...formData, department_id: value })
+                          }
+                          placeholder={t("employees.departmentPlaceholder")}
+                          searchPlaceholder="Search or type to create..."
+                          emptyText="No department found."
+                          allowCustom={true}
+                          onCreateCustom={async (customDept) => {
+                            if (!companyId) return;
+                            try {
+                              const { data, error } = await (supabase as any)
+                                .from("departments")
+                                .insert({
+                                  name: customDept,
+                                  company_id: companyId,
+                                })
+                                .select()
+                                .single();
+
+                              if (error) throw error;
+
+                              if (data) {
+                                setFormData({
+                                  ...formData,
+                                  department_id: (data as any).id,
+                                });
+                                await fetchDepartments();
+                                toast.success(
+                                  `Department "${customDept}" created`
+                                );
+                              }
+                            } catch (error) {
+                              console.error(
+                                "Error creating department:",
+                                error
+                              );
+                              toast.error("Failed to create department");
+                            }
+                          }}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>{t("employees.hireDate")}</Label>
+                        <Input
+                          type="date"
+                          className="h-11 border-2 focus:border-primary transition-colors"
+                          value={formData.hire_date}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              hire_date: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+
+                      <DialogFooter className="pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setIsDialogOpen(false)}
+                        >
+                          {t("common.cancel")}
+                        </Button>
+                        <Button type="submit" disabled={isSubmitting}>
+                          {isSubmitting
+                            ? t("employees.adding")
+                            : t("employees.addEmployee")}
+                        </Button>
+                      </DialogFooter>
+                    </form>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
             {/* Filters */}
-            <div className="flex flex-col sm:flex-row gap-4 mb-4">
+            <div className="flex flex-col sm:flex-row gap-4 mb-4 p-4 bg-muted/30 rounded-xl border border-border/50">
+              <div className="flex items-center gap-2 mb-2 sm:mb-0">
+                <Filter className="w-4 h-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Filters</span>
+              </div>
               <div className="flex-1">
-                <Label className="text-xs mb-1">Status Filter</Label>
+                <Label className="text-xs mb-1">
+                  {t("employees.filterStatus")}
+                </Label>
                 <Select value={filterActive} onValueChange={setFilterActive}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Filter by status" />
+                    <SelectValue placeholder={t("employees.filterStatus")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Employees</SelectItem>
-                    <SelectItem value="active">Active Only</SelectItem>
-                    <SelectItem value="inactive">Inactive Only</SelectItem>
+                    <SelectItem value="all">
+                      {t("employees.allEmployees")}
+                    </SelectItem>
+                    <SelectItem value="active">
+                      {t("employees.activeOnly")}
+                    </SelectItem>
+                    <SelectItem value="inactive">
+                      {t("employees.inactiveOnly")}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex-1">
-                <Label className="text-xs mb-1">Department Filter</Label>
+                <Label className="text-xs mb-1">
+                  {t("employees.filterDepartment")}
+                </Label>
                 <Select
                   value={filterDepartment}
                   onValueChange={setFilterDepartment}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Filter by department" />
+                    <SelectValue
+                      placeholder={t("employees.filterDepartment")}
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Departments</SelectItem>
+                    <SelectItem value="all">
+                      {t("employees.allDepartments")}
+                    </SelectItem>
                     {departments.map((dept) => (
                       <SelectItem key={dept.id} value={dept.id}>
                         {dept.name}
@@ -527,12 +976,12 @@ export default function Employees() {
             </div>
 
             {/* Search Bar */}
-            <div className="mb-4">
+            <div className="mb-6">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-muted-foreground w-5 h-5" />
                 <Input
-                  placeholder="Search employees..."
-                  className="pl-10"
+                  placeholder={t("employees.search")}
+                  className="pl-12 h-12 border-2 focus:border-primary transition-colors"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -543,51 +992,93 @@ export default function Employees() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Employee #</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead>Job Role</TableHead>
-                    <TableHead>Hire Date</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>{t("employees.employeeNumber")}</TableHead>
+                    <TableHead>{t("employees.name")}</TableHead>
+                    <TableHead>{t("employees.email")}</TableHead>
+                    <TableHead>{t("employees.department")}</TableHead>
+                    <TableHead>{t("employees.jobRole")}</TableHead>
+                    <TableHead>{t("employees.hireDate")}</TableHead>
+                    <TableHead>{t("employees.status")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredEmployees.length === 0 ? (
                     <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className="text-center py-8 text-muted-foreground"
-                      >
-                        No employees found
+                      <TableCell colSpan={7} className="text-center py-12">
+                        <div className="flex flex-col items-center justify-center">
+                          <Users className="w-16 h-16 text-muted-foreground/20 mb-4" />
+                          <p className="text-lg font-medium text-muted-foreground mb-1">
+                            {t("employees.noEmployees")}
+                          </p>
+                          <p className="text-sm text-muted-foreground/60">
+                            Add your first employee to get started
+                          </p>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ) : (
                     filteredEmployees.map((employee) => (
                       <TableRow
                         key={employee.id}
-                        className="cursor-pointer hover:bg-muted/50 transition-colors"
-                        onClick={() => navigate(`/employees/${employee.id}`)}
+                        className="hover:bg-muted/70 transition-all duration-200 border-b border-border/50 hover:shadow-sm group"
                       >
-                        <TableCell>{employee.employee_number}</TableCell>
-                        <TableCell className="font-medium">
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
+                          {employee.employee_number}
+                        </TableCell>
+                        <TableCell
+                          className="font-medium cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
                           {employee.full_name}
                         </TableCell>
-                        <TableCell>{employee.email || "-"}</TableCell>
-                        <TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
+                          {employee.email || "-"}
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
                           {employee.departments?.name || "-"}
                         </TableCell>
-                        <TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
                           {employee.job_roles?.title || "-"}
                         </TableCell>
-                        <TableCell>{employee.hire_date || "-"}</TableCell>
-                        <TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
+                          {employee.hire_date || "-"}
+                        </TableCell>
+                        <TableCell
+                          className="cursor-pointer"
+                          onClick={() => navigate(`/employees/${employee.id}`)}
+                        >
                           <Badge
                             variant={
                               employee.is_active ? "default" : "secondary"
                             }
+                            className="flex items-center gap-1 px-2.5 py-0.5 font-semibold w-fit"
                           >
-                            {employee.is_active ? "Active" : "Inactive"}
+                            {employee.is_active ? (
+                              <>
+                                <CheckCircle className="w-3 h-3" />
+                                {t("employees.active")}
+                              </>
+                            ) : (
+                              <>
+                                <XCircle className="w-3 h-3" />
+                                {t("employees.inactive")}
+                              </>
+                            )}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -603,64 +1094,82 @@ export default function Employees() {
           <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
             <SheetHeader>
               <SheetTitle>{selectedEmployee?.full_name}</SheetTitle>
-              <SheetDescription>Employee Details & Records</SheetDescription>
+              <SheetDescription>{t("employees.details")}</SheetDescription>
             </SheetHeader>
 
             <Tabs defaultValue="info" className="mt-6">
               <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="info">Info</TabsTrigger>
-                <TabsTrigger value="risk">Risk Profile</TabsTrigger>
-                <TabsTrigger value="training">Training</TabsTrigger>
-                <TabsTrigger value="tasks">Tasks</TabsTrigger>
+                <TabsTrigger value="info">{t("employees.info")}</TabsTrigger>
+                <TabsTrigger value="risk">
+                  {t("employees.riskProfile")}
+                </TabsTrigger>
+                <TabsTrigger value="training">
+                  {t("employees.training")}
+                </TabsTrigger>
+                <TabsTrigger value="tasks">{t("employees.tasks")}</TabsTrigger>
               </TabsList>
 
               <TabsContent value="info" className="space-y-4 mt-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-sm text-muted-foreground">Employee #</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("employees.employeeNumber")}
+                    </p>
                     <p className="font-medium">
                       {selectedEmployee?.employee_number}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Email</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("employees.email")}
+                    </p>
                     <p className="font-medium">{selectedEmployee?.email}</p>
                   </div>
 
                   <div>
-                    <p className="text-sm text-muted-foreground">Hire Date</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("employees.hireDate")}
+                    </p>
                     <p className="font-medium">
                       {selectedEmployee?.hire_date || "-"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Department</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("employees.department")}
+                    </p>
                     <p className="font-medium">
                       {selectedEmployee?.departments?.name || "-"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Job Role</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("employees.jobRole")}
+                    </p>
                     <p className="font-medium">
                       {selectedEmployee?.job_roles?.title || "-"}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">
-                      Exposure Group
+                      {t("employees.exposureGroup")}
                     </p>
                     <p className="font-medium">
                       {selectedEmployee?.exposure_groups?.name || "-"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Status</p>
+                    <p className="text-sm text-muted-foreground">
+                      {t("employees.status")}
+                    </p>
                     <Badge
                       variant={
                         selectedEmployee?.is_active ? "default" : "secondary"
                       }
                     >
-                      {selectedEmployee?.is_active ? "Active" : "Inactive"}
+                      {selectedEmployee?.is_active
+                        ? t("employees.active")
+                        : t("employees.inactive")}
                     </Badge>
                   </div>
                 </div>
@@ -668,24 +1177,222 @@ export default function Employees() {
 
               <TabsContent value="risk" className="mt-4">
                 <p className="text-sm text-muted-foreground">
-                  Risk assessments assigned to this employee will appear here.
+                  {t("employees.riskAssignments")}
                 </p>
               </TabsContent>
 
               <TabsContent value="training" className="mt-4">
                 <p className="text-sm text-muted-foreground">
-                  Training records for this employee will appear here.
+                  {t("employees.trainingRecords")}
                 </p>
               </TabsContent>
 
               <TabsContent value="tasks" className="mt-4">
                 <p className="text-sm text-muted-foreground">
-                  Tasks assigned to this employee will appear here.
+                  {t("employees.assignedTasks")}
                 </p>
               </TabsContent>
             </Tabs>
           </SheetContent>
         </Sheet>
+
+        {/* Tasks Dialog */}
+        <Dialog open={isTasksDialogOpen} onOpenChange={setIsTasksDialogOpen}>
+          <DialogContent
+            className={`transition-all duration-300 ${
+              showMentionDropdown && filteredEmployeesForMention.length > 0
+                ? "max-w-2xl max-h-[600px]"
+                : "max-w-xl max-h-[200px]"
+            }`}
+          >
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <ClipboardList className="w-4 h-4" />
+                Assign Task
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Type @ to mention employees
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {/* Search Input */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Enter task and type @ to select employee..."
+                    value={newTaskTitle}
+                    className="h-9 text-sm flex-1"
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      const cursorPos = e.target.selectionStart || 0;
+                      setNewTaskTitle(value);
+
+                      const textBeforeCursor = value.substring(0, cursorPos);
+                      const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+
+                      if (lastAtIndex !== -1) {
+                        const textAfterAt = textBeforeCursor.substring(
+                          lastAtIndex + 1
+                        );
+                        if (!textAfterAt.includes(" ")) {
+                          setMentionSearch(textAfterAt);
+                          setShowMentionDropdown(true);
+                        } else {
+                          setShowMentionDropdown(false);
+                        }
+                      } else {
+                        setShowMentionDropdown(false);
+                      }
+                    }}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreateTask()}
+                  />
+                  <Button
+                    onClick={handleCreateTask}
+                    size="sm"
+                    className="h-9 px-4"
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    Assign
+                  </Button>
+                </div>
+                {/* Preview with styled mentions */}
+                {newTaskTitle && (
+                  <div className="px-3 py-2 bg-muted/30 rounded-md border border-border/50 min-h-[32px] flex items-center flex-wrap gap-1">
+                    {renderTextWithMentions(newTaskTitle)}
+                  </div>
+                )}
+              </div>
+
+              {/* Employee List - shows when @ is typed */}
+              {showMentionDropdown &&
+                filteredEmployeesForMention.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/50 px-3 py-2 border-b">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Select Employee ({filteredEmployeesForMention.length})
+                      </p>
+                    </div>
+                    <div className="max-h-[380px] overflow-y-auto">
+                      {filteredEmployeesForMention.map((emp) => (
+                        <div
+                          key={emp.id}
+                          className="px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors border-b last:border-0"
+                          onClick={() => {
+                            const cursorPos = newTaskTitle.length;
+                            const textBeforeCursor = newTaskTitle.substring(
+                              0,
+                              cursorPos
+                            );
+                            const lastAtIndex =
+                              textBeforeCursor.lastIndexOf("@");
+                            const textBeforeAt = newTaskTitle.substring(
+                              0,
+                              lastAtIndex
+                            );
+                            const textAfterCursor =
+                              newTaskTitle.substring(cursorPos);
+                            setNewTaskTitle(
+                              `${textBeforeAt}@${emp.full_name} ${textAfterCursor}`
+                            );
+                            setShowMentionDropdown(false);
+                          }}
+                        >
+                          <div className="font-medium text-sm">
+                            {emp.full_name}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {emp.employee_number} •{" "}
+                            {emp.departments?.name || "No dept"} •{" "}
+                            {emp.job_roles?.title || "No role"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Notes Dialog */}
+        <Dialog open={isNotesDialogOpen} onOpenChange={setIsNotesDialogOpen}>
+          <DialogContent
+            className={`transition-all duration-300 ${
+              showMentionDropdown && filteredEmployeesForMention.length > 0
+                ? "max-w-2xl max-h-[600px]"
+                : "max-w-xl max-h-[280px]"
+            }`}
+          >
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <StickyNote className="w-4 h-4" />
+                Add Note
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Type @ to mention employees
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              {/* Note Input */}
+              <div className="space-y-2">
+                <Textarea
+                  placeholder="Enter note and type @ to select employee..."
+                  value={newNote}
+                  onChange={handleNoteChange}
+                  className="min-h-[80px] text-sm resize-none"
+                />
+                {/* Preview with styled mentions */}
+                {newNote && (
+                  <div className="px-3 py-2 bg-muted/30 rounded-md border border-border/50 min-h-[40px] flex items-start flex-wrap gap-1">
+                    {renderTextWithMentions(newNote)}
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleSaveNote}
+                    size="sm"
+                    className="h-9 px-4"
+                  >
+                    <Save className="w-3 h-3 mr-1" />
+                    Save
+                  </Button>
+                </div>
+              </div>
+
+              {/* Employee List - shows when @ is typed */}
+              {showMentionDropdown &&
+                filteredEmployeesForMention.length > 0 && (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-muted/50 px-3 py-2 border-b">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Select Employee ({filteredEmployeesForMention.length})
+                      </p>
+                    </div>
+                    <div className="max-h-[320px] overflow-y-auto">
+                      {filteredEmployeesForMention.map((emp) => (
+                        <div
+                          key={emp.id}
+                          className="px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors border-b last:border-0"
+                          onClick={() => handleMentionSelect(emp.full_name)}
+                        >
+                          <div className="font-medium text-sm">
+                            {emp.full_name}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {emp.employee_number} •{" "}
+                            {emp.departments?.name || "No dept"} •{" "}
+                            {emp.job_roles?.title || "No role"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

@@ -37,13 +37,13 @@ All colors MUST be HSL.
     --ring: 221 83% 53%;
 
     --radius: 0.5rem;
-    
+
     --success: 142 71% 45%;
     --success-foreground: 0 0% 100%;
-    
+
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
-    
+
     --chart-1: 221 83% 53%;
     --chart-2: 142 71% 45%;
     --chart-3: 38 92% 50%;
@@ -88,19 +88,19 @@ All colors MUST be HSL.
     --border: 217 33% 17%;
     --input: 217 33% 17%;
     --ring: 221 83% 53%;
-    
+
     --success: 142 71% 45%;
     --success-foreground: 0 0% 100%;
-    
+
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
-    
+
     --chart-1: 221 83% 53%;
     --chart-2: 142 71% 45%;
     --chart-3: 38 92% 50%;
     --chart-4: 0 84% 60%;
     --chart-5: 280 65% 60%;
-    
+
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -120,4 +120,18 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+}
+
+
+/* Fix Cloudinary Widget Z-Index and Interaction */
+iframe[src*="cloudinary"] {
+  z-index: 2147483647 !important;
+  pointer-events: auto !important;
+  position: fixed !important;
+}
+
+.cloudinary-overlay {
+  z-index: 2147483646 !important;
+  pointer-events: auto !important;
+  position: fixed !important;
 }
