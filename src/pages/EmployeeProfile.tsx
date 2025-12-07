@@ -187,6 +187,7 @@ export default function EmployeeProfile() {
   const [newTag, setNewTag] = useState("");
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [employees, setEmployees] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]); // Users for @mention in notes
 
   // Task enhancement states
   const [newTaskDueDate, setNewTaskDueDate] = useState<Date | undefined>(
@@ -263,6 +264,7 @@ export default function EmployeeProfile() {
       fetchEmployees();
       fetchGInvestigations();
       fetchProfileFields();
+      fetchUsers(); // Fetch users for @mention
     }
   }, [id, companyId]);
 
@@ -537,6 +539,45 @@ export default function EmployeeProfile() {
       console.error("Error fetching employees:", error);
     }
   };
+
+  // Fetch users (login accounts) for @mention in notes
+  const fetchUsers = async () => {
+    if (!companyId) return;
+    try {
+      // Fetch users from user_roles table with their email from auth metadata
+      const { data, error } = await supabase
+        .from("user_roles")
+        .select(`
+          user_id,
+          full_name,
+          email
+        `)
+        .eq("company_id", companyId);
+
+      if (error) {
+        console.log("Error fetching users:", error);
+        setUsers([]);
+        return;
+      }
+      
+      // Map to format expected by the UI
+      const formattedUsers = (data || []).map(user => ({
+        id: user.user_id,
+        full_name: user.full_name,
+        email: user.email
+      }));
+      
+      setUsers(formattedUsers);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      setUsers([]);
+    }
+  };
+
+  // Filter users based on mention search for notes
+  const filteredNotesUsers = users.filter((user) =>
+    user.full_name?.toLowerCase().includes(notesMentionSearch.toLowerCase())
+  );
 
   const fetchGInvestigations = async () => {
     if (!companyId) return;
@@ -991,6 +1032,31 @@ export default function EmployeeProfile() {
     }
   };
 
+  // Check-up helper functions
+  const getCheckupStatus = (checkup: any) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (checkup.status === 'done' || checkup.completion_date) {
+      return { label: 'Done', color: 'green', variant: 'default' as const };
+    }
+    
+    if (checkup.appointment_date) {
+      const appointmentDate = new Date(checkup.appointment_date);
+      appointmentDate.setHours(0, 0, 0, 0);
+      
+      if (appointmentDate < today) {
+        return { label: 'Due', color: 'red', variant: 'destructive' as const };
+      }
+      
+      return { label: 'Planned', color: 'blue', variant: 'secondary' as const };
+    }
+    
+    return { label: 'Open', color: 'gray', variant: 'outline' as const };
+  };
+
+ 
+
   // Document preview and rename functions
   const handlePreviewDocument = async (doc: any) => {
     try {
@@ -1324,14 +1390,27 @@ export default function EmployeeProfile() {
         const nextCheckupDate = new Date(completionDate);
         nextCheckupDate.setFullYear(nextCheckupDate.getFullYear() + 3);
 
-        await supabase.from("health_checkups").insert({
-          employee_id: id,
-          company_id: companyId,
-          investigation_name: checkupFormData.investigation_id, // Store G-code directly
-          appointment_date: nextCheckupDate.toISOString().split("T")[0],
-          status: "open",
-          notes: "Auto-scheduled 3 years after previous checkup",
-        });
+        // Check if a future checkup with the same investigation already exists
+        const { data: existingFutureCheckups } = await supabase
+          .from("health_checkups")
+          .select("id")
+          .eq("employee_id", id)
+          .eq("investigation_name", checkupFormData.investigation_id)
+          .gte("appointment_date", new Date().toISOString().split("T")[0])
+          .is("completion_date", null)
+          .limit(1);
+
+        // Only create new checkup if no future one exists
+        if (!existingFutureCheckups || existingFutureCheckups.length === 0) {
+          await supabase.from("health_checkups").insert({
+            employee_id: id,
+            company_id: companyId,
+            investigation_name: checkupFormData.investigation_id,
+            appointment_date: nextCheckupDate.toISOString().split("T")[0],
+            status: "open",
+            notes: "Auto-scheduled 3 years after previous checkup",
+          });
+        }
 
         toast.success("Check-up created and next checkup scheduled in 3 years");
       } else {
@@ -1366,6 +1445,33 @@ export default function EmployeeProfile() {
     }
   };
 
+  const handleDeleteCheckup = async (checkupId: string, checkupName: string) => {
+    if (!confirm(`Delete check-up "${checkupName}"?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from("health_checkups")
+        .delete()
+        .eq("id", checkupId);
+
+      if (error) throw error;
+
+      await logActivity(
+        "Deleted health check-up",
+        "delete",
+        `Deleted check-up: ${checkupName}`,
+        { checkupId, checkupName }
+      );
+
+      toast.success("Check-up deleted successfully");
+      fetchHealthCheckups();
+      fetchActivityLogs();
+    } catch (error) {
+      console.error("Error deleting checkup:", error);
+      toast.error("Failed to delete checkup");
+    }
+  };
+
   const handleUpdateCheckup = async (checkupId: string, updates: any) => {
     try {
       // If updating to "done" status with completion date, schedule next checkup
@@ -1375,17 +1481,31 @@ export default function EmployeeProfile() {
         nextCheckupDate.setFullYear(nextCheckupDate.getFullYear() + 3);
 
         const checkup = healthCheckups.find((c) => c.id === checkupId);
+        const investigationName = checkup?.investigation_name || checkup?.investigation_id;
 
-        await supabase.from("health_checkups").insert({
-          employee_id: id,
-          company_id: companyId,
-          investigation_name:
-            checkup?.investigation_name || checkup?.investigation_id,
-          appointment_date: nextCheckupDate.toISOString().split("T")[0],
-          status: "open",
-          notes: "Auto-scheduled 3 years after previous checkup",
-        });
+        // Check if a future checkup with the same investigation already exists
+        const { data: existingFutureCheckups } = await supabase
+          .from("health_checkups")
+          .select("id")
+          .eq("employee_id", id)
+          .eq("investigation_name", investigationName)
+          .gte("appointment_date", new Date().toISOString().split("T")[0])
+          .is("completion_date", null)
+          .limit(1);
+
+        // Only create new checkup if no future one exists
+        if (!existingFutureCheckups || existingFutureCheckups.length === 0) {
+          await supabase.from("health_checkups").insert({
+            employee_id: id,
+            company_id: companyId,
+            investigation_name: investigationName,
+            appointment_date: nextCheckupDate.toISOString().split("T")[0],
+            status: "open",
+            notes: "Auto-scheduled 3 years after previous checkup",
+          });
+        }
       }
+
 
       const { error } = await supabase
         .from("health_checkups")
@@ -1411,31 +1531,6 @@ export default function EmployeeProfile() {
     }
   };
 
-  const handleDeleteCheckup = async (checkupId: string) => {
-    if (!confirm("Are you sure you want to delete this check-up?")) return;
-
-    try {
-      const { error } = await supabase
-        .from("health_checkups")
-        .delete()
-        .eq("id", checkupId);
-
-      if (error) throw error;
-
-      await logActivity(
-        "Deleted health check-up",
-        "delete",
-        `Deleted check-up appointment`,
-        { checkupId }
-      );
-
-      toast.success("Check-up deleted successfully");
-      fetchHealthCheckups();
-    } catch (error) {
-      console.error("Error deleting checkup:", error);
-      toast.error("Failed to delete checkup");
-    }
-  };
 
   const handleCertificateUpload = async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -1555,7 +1650,7 @@ export default function EmployeeProfile() {
               placeholder={`Select ${label}`}
               searchPlaceholder="Search or type to create..."
               emptyText={`No ${label.toLowerCase()} found.`}
-              allowCustom={field === "department_id" || field === "job_role_id"}
+              allowCustom={field === "department_id" || field === "job_role_id" || field === "exposure_group_id"}
               onCreateCustom={async (newValue) => {
                 if (!companyId) return;
                 try {
@@ -1568,6 +1663,9 @@ export default function EmployeeProfile() {
                   } else if (field === "job_role_id") {
                     table = "job_roles";
                     dataField = "title";
+                  } else if (field === "exposure_group_id") {
+                    table = "exposure_groups";
+                    dataField = "name";
                   }
 
                   if (table) {
@@ -1634,8 +1732,9 @@ export default function EmployeeProfile() {
   const renderNoteContent = (content: string) => {
     if (!content) return null;
 
-    // Split content by @mentions
-    const parts = content.split(/(@\w+(?:\s+\w+)*)/g);
+    // Split content by @mentions - only match @username (single word or quoted name)
+    // Pattern matches @word where word is alphanumeric/underscore characters
+    const parts = content.split(/(@\w+)/g);
 
     return parts.map((part, index) => {
       if (part.startsWith("@")) {
@@ -1814,32 +1913,90 @@ export default function EmployeeProfile() {
                 </div>
 
                 {/* 3. Contact Card - THIRD */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">Contact</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-[100px_1fr] gap-2 text-sm">
-                        <span className="text-muted-foreground">Email</span>
-                        <span className="font-medium">{employee.email}</span>
-                      </div>
-                      <div className="grid grid-cols-[100px_1fr] gap-2 text-sm">
-                        <span className="text-muted-foreground">
-                          Employee #
-                        </span>
-                        <span className="font-medium">
-                          {employee.employee_number}
-                        </span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+               
 
                 {/* 3.5. Profile Fields - Languages, Skills, Salary */}
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-lg">Profile Fields</CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">Profile Fields</CardTitle>
+                      <div className="relative">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs h-8 text-muted-foreground"
+                          onClick={() =>
+                            setShowProfileFieldMenu(!showProfileFieldMenu)
+                          }
+                        >
+                          <Plus className="w-3 h-3 mr-1" />
+                          Add profile field
+                          <ChevronDown className="w-3 h-3 ml-1" />
+                        </Button>
+
+                        {showProfileFieldMenu && (
+                          <Card className="absolute top-full right-0 mt-1 w-48 z-50 shadow-lg">
+                            <CardContent className="p-2">
+                              <div className="space-y-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start text-xs"
+                                  onClick={() =>
+                                    handleAddProfileField("Single-line text")
+                                  }
+                                >
+                                  <FileText className="w-3 h-3 mr-2" />
+                                  Single-line text
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start text-xs"
+                                  onClick={() =>
+                                    handleAddProfileField("Multi-line text")
+                                  }
+                                >
+                                  <List className="w-3 h-3 mr-2" />
+                                  Multi-line text
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start text-xs"
+                                  onClick={() =>
+                                    handleAddProfileField("Yes/No")
+                                  }
+                                >
+                                  <CheckCircle className="w-3 h-3 mr-2" />
+                                  Yes / No
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start text-xs"
+                                  onClick={() => handleAddProfileField("Date")}
+                                >
+                                  <CalendarIcon className="w-3 h-3 mr-2" />
+                                  Date
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="w-full justify-start text-xs"
+                                  onClick={() =>
+                                    handleAddProfileField("Number")
+                                  }
+                                >
+                                  <Hash className="w-3 h-3 mr-2" />
+                                  Number
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+                      </div>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-4">
@@ -1977,208 +2134,124 @@ export default function EmployeeProfile() {
                           </p>
                         )}
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
 
-                {/* 4. Profile Fields Table - FOURTH with Add profile field button */}
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <div className="relative">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-xs h-8 text-muted-foreground"
-                          onClick={() =>
-                            setShowProfileFieldMenu(!showProfileFieldMenu)
-                          }
-                        >
-                          <Plus className="w-3 h-3 mr-1" />
-                          Add profile field
-                          <ChevronDown className="w-3 h-3 ml-1" />
-                        </Button>
+                      {/* Divider before custom fields */}
+                      {profileFields.length > 0 && (
+                        <div className="border-t pt-4 mt-4"></div>
+                      )}
 
-                        {showProfileFieldMenu && (
-                          <Card className="absolute top-full left-0 mt-1 w-48 z-50 shadow-lg">
-                            <CardContent className="p-2">
-                              <div className="space-y-1">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="w-full justify-start text-xs"
-                                  onClick={() =>
-                                    handleAddProfileField("Single-line text")
-                                  }
-                                >
-                                  <FileText className="w-3 h-3 mr-2" />
-                                  Single-line text
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="w-full justify-start text-xs"
-                                  onClick={() =>
-                                    handleAddProfileField("Multi-line text")
-                                  }
-                                >
-                                  <List className="w-3 h-3 mr-2" />
-                                  Multi-line text
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="w-full justify-start text-xs"
-                                  onClick={() =>
-                                    handleAddProfileField("Yes/No")
-                                  }
-                                >
-                                  <CheckCircle className="w-3 h-3 mr-2" />
-                                  Yes / No
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="w-full justify-start text-xs"
-                                  onClick={() => handleAddProfileField("Date")}
-                                >
-                                  <CalendarIcon className="w-3 h-3 mr-2" />
-                                  Date
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="w-full justify-start text-xs"
-                                  onClick={() =>
-                                    handleAddProfileField("Number")
-                                  }
-                                >
-                                  <Hash className="w-3 h-3 mr-2" />
-                                  Number
-                                </Button>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {profileFields.length > 0 ? (
-                      <>
-                        <div className="border rounded-lg">
-                          <Table>
-                            <TableBody>
-                              {profileFields
-                                .slice(0, showAllProfileFields ? undefined : 3)
-                                .map((field) => (
-                                  <TableRow key={field.id}>
-                                    <TableCell className="font-medium w-[180px]">
-                                      <Input
-                                        value={field.label}
-                                        onChange={(e) =>
-                                          handleUpdateProfileField(field.id, {
-                                            label: e.target.value,
-                                          })
-                                        }
-                                        className="border-0 bg-transparent p-0 h-auto focus-visible:ring-0 text-sm"
-                                      />
-                                    </TableCell>
-                                    <TableCell>
-                                      {field.type === "Yes/No" ? (
-                                        <Switch
-                                          checked={field.value}
-                                          onCheckedChange={(checked) =>
-                                            handleUpdateProfileField(field.id, {
-                                              value: checked,
-                                            })
-                                          }
-                                        />
-                                      ) : field.type === "Date" ? (
+                      {/* Custom Profile Fields Table */}
+                      {profileFields.length > 0 && (
+                        <>
+                          <div className="border rounded-lg">
+                            <Table>
+                              <TableBody>
+                                {profileFields
+                                  .slice(0, showAllProfileFields ? undefined : 3)
+                                  .map((field) => (
+                                    <TableRow key={field.id}>
+                                      <TableCell className="font-medium w-[180px]">
                                         <Input
-                                          type="date"
-                                          value={field.value || ""}
+                                          value={field.label}
                                           onChange={(e) =>
                                             handleUpdateProfileField(field.id, {
-                                              value: e.target.value,
+                                              label: e.target.value,
                                             })
                                           }
-                                          className="text-sm"
+                                          className="border-0 bg-transparent p-0 h-auto focus-visible:ring-0 text-sm"
                                         />
-                                      ) : field.type === "Number" ? (
-                                        <Input
-                                          type="number"
-                                          value={field.value || ""}
-                                          onChange={(e) =>
-                                            handleUpdateProfileField(field.id, {
-                                              value: e.target.value,
-                                            })
+                                      </TableCell>
+                                      <TableCell>
+                                        {field.type === "Yes/No" ? (
+                                          <Switch
+                                            checked={field.value}
+                                            onCheckedChange={(checked) =>
+                                              handleUpdateProfileField(field.id, {
+                                                value: checked,
+                                              })
+                                            }
+                                          />
+                                        ) : field.type === "Date" ? (
+                                          <Input
+                                            type="date"
+                                            value={field.value || ""}
+                                            onChange={(e) =>
+                                              handleUpdateProfileField(field.id, {
+                                                value: e.target.value,
+                                              })
+                                            }
+                                            className="text-sm"
+                                          />
+                                        ) : field.type === "Number" ? (
+                                          <Input
+                                            type="number"
+                                            value={field.value || ""}
+                                            onChange={(e) =>
+                                              handleUpdateProfileField(field.id, {
+                                                value: e.target.value,
+                                              })
+                                            }
+                                            className="text-sm"
+                                          />
+                                        ) : field.type === "Multi-line text" ? (
+                                          <Textarea
+                                            value={field.value || ""}
+                                            onChange={(e) =>
+                                              handleUpdateProfileField(field.id, {
+                                                value: e.target.value,
+                                              })
+                                            }
+                                            className="text-sm min-h-[60px]"
+                                          />
+                                        ) : (
+                                          <Input
+                                            value={field.value || ""}
+                                            onChange={(e) =>
+                                              handleUpdateProfileField(field.id, {
+                                                value: e.target.value,
+                                              })
+                                            }
+                                            className="text-sm"
+                                          />
+                                        )}
+                                      </TableCell>
+                                      <TableCell className="w-[50px]">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-8 w-8"
+                                          onClick={() =>
+                                            handleDeleteProfileField(field.id)
                                           }
-                                          className="text-sm"
-                                        />
-                                      ) : field.type === "Multi-line text" ? (
-                                        <Textarea
-                                          value={field.value || ""}
-                                          onChange={(e) =>
-                                            handleUpdateProfileField(field.id, {
-                                              value: e.target.value,
-                                            })
-                                          }
-                                          className="text-sm min-h-[60px]"
-                                        />
-                                      ) : (
-                                        <Input
-                                          value={field.value || ""}
-                                          onChange={(e) =>
-                                            handleUpdateProfileField(field.id, {
-                                              value: e.target.value,
-                                            })
-                                          }
-                                          className="text-sm"
-                                        />
-                                      )}
-                                    </TableCell>
-                                    <TableCell className="w-[50px]">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() =>
-                                          handleDeleteProfileField(field.id)
-                                        }
-                                      >
-                                        <Trash2 className="w-4 h-4 text-destructive" />
-                                      </Button>
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-
-                        {profileFields.length > 3 && (
-                          <div className="mt-3 text-center">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-xs"
-                              onClick={() =>
-                                setShowAllProfileFields(!showAllProfileFields)
-                              }
-                            >
-                              {showAllProfileFields
-                                ? "Show less"
-                                : `Show more (${profileFields.length - 3})`}
-                            </Button>
+                                        >
+                                          <Trash2 className="w-4 h-4 text-destructive" />
+                                        </Button>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                              </TableBody>
+                            </Table>
                           </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground text-sm">
-                        No custom fields yet. Click "Add profile field" to
-                        create one.
-                      </div>
-                    )}
+
+                          {profileFields.length > 3 && (
+                            <div className="mt-3 text-center">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-xs"
+                                onClick={() =>
+                                  setShowAllProfileFields(!showAllProfileFields)
+                                }
+                              >
+                                {showAllProfileFields
+                                  ? "Show less"
+                                  : `Show more (${profileFields.length - 3})`}
+                              </Button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               </div>
@@ -2560,22 +2633,22 @@ export default function EmployeeProfile() {
                               className="min-h-[60px] text-sm border-0 p-0 focus-visible:ring-0 resize-none"
                             />
                             {showNotesMentionDropdown &&
-                              filteredNotesEmployees.length > 0 && (
+                              filteredNotesUsers.length > 0 && (
                                 <Card className="absolute bottom-full mb-1 w-full max-h-48 overflow-y-auto z-50 shadow-lg">
                                   <CardContent className="p-2">
-                                    {filteredNotesEmployees.map((emp) => (
+                                    {filteredNotesUsers.map((user) => (
                                       <div
-                                        key={emp.id}
+                                        key={user.id}
                                         className="px-3 py-2 hover:bg-muted rounded cursor-pointer"
                                         onClick={() =>
-                                          handleMentionSelect(emp.full_name)
+                                          handleMentionSelect(user.full_name)
                                         }
                                       >
                                         <div className="font-medium text-sm">
-                                          {emp.full_name}
+                                          {user.full_name}
                                         </div>
                                         <div className="text-xs text-muted-foreground">
-                                          #{emp.employee_number}
+                                          {user.email}
                                         </div>
                                       </div>
                                     ))}
@@ -2600,6 +2673,10 @@ export default function EmployeeProfile() {
                             variant="ghost"
                             size="sm"
                             className="text-xs h-7"
+                            onClick={() => {
+                              setNotes("");
+                              setShowNotesMentionDropdown(false);
+                            }}
                           >
                             Cancel
                           </Button>
@@ -2679,17 +2756,33 @@ export default function EmployeeProfile() {
                                         <Button
                                           variant="ghost"
                                           size="sm"
-                                          className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                          className={`h-6 px-2 text-xs ${note.liked ? 'text-primary' : 'text-muted-foreground'} hover:text-foreground`}
+                                          onClick={async () => {
+                                            try {
+                                              let existingNotes: any[] = [];
+                                              if (employee?.notes && (employee.notes.startsWith("[") || employee.notes.startsWith("{"))) {
+                                                existingNotes = JSON.parse(employee.notes);
+                                                if (!Array.isArray(existingNotes)) existingNotes = [];
+                                              }
+                                              const updatedNotes = existingNotes.map((n: any) => 
+                                                n.id === note.id 
+                                                  ? { ...n, liked: !n.liked, likes: (n.likes || 0) + (n.liked ? -1 : 1) } 
+                                                  : n
+                                              );
+                                              const { error } = await (supabase as any)
+                                                .from("employees")
+                                                .update({ notes: JSON.stringify(updatedNotes) })
+                                                .eq("id", id);
+                                              if (error) throw error;
+                                              fetchEmployeeData();
+                                            } catch (error) {
+                                              console.error("Error toggling like:", error);
+                                              toast.error("Failed to update like");
+                                            }
+                                          }}
                                         >
-                                          <ThumbsUp className="w-3 h-3 mr-1" />
-                                          Like
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
-                                        >
-                                          <RefreshCw className="w-3 h-3 mr-1" />
+                                          <ThumbsUp className={`w-3 h-3 mr-1 ${note.liked ? 'fill-current' : ''}`} />
+                                          {note.likes > 0 ? note.likes : ''} Like
                                         </Button>
                                         <Button
                                           variant="ghost"
@@ -2732,11 +2825,45 @@ export default function EmployeeProfile() {
                                               <Button
                                                 size="sm"
                                                 className="text-xs h-7"
-                                                onClick={() => {
-                                                  // TODO: Implement reply save functionality
-                                                  toast.success("Reply added");
-                                                  setReplyingToNoteId(null);
-                                                  setReplyText("");
+                                                onClick={async () => {
+                                                  if (!replyText.trim()) {
+                                                    toast.error("Reply cannot be empty");
+                                                    return;
+                                                  }
+                                                  try {
+                                                    let existingNotes: any[] = [];
+                                                    if (employee?.notes && (employee.notes.startsWith("[") || employee.notes.startsWith("{"))) {
+                                                      existingNotes = JSON.parse(employee.notes);
+                                                      if (!Array.isArray(existingNotes)) existingNotes = [];
+                                                    }
+                                                    const newReplyNote = {
+                                                      id: Date.now().toString(),
+                                                      content: replyText,
+                                                      author: "Current User",
+                                                      date: new Date().toISOString(),
+                                                      replyTo: note.id,
+                                                      likes: 0,
+                                                      liked: false,
+                                                    };
+                                                    const updatedNotes = [...existingNotes, newReplyNote];
+                                                    const { error } = await (supabase as any)
+                                                      .from("employees")
+                                                      .update({ notes: JSON.stringify(updatedNotes) })
+                                                      .eq("id", id);
+                                                    if (error) throw error;
+                                                    await logActivity(
+                                                      "Added reply",
+                                                      "create",
+                                                      replyText.substring(0, 100) + (replyText.length > 100 ? "..." : "")
+                                                    );
+                                                    toast.success("Reply added successfully");
+                                                    setReplyingToNoteId(null);
+                                                    setReplyText("");
+                                                    fetchEmployeeData();
+                                                  } catch (error) {
+                                                    console.error("Error saving reply:", error);
+                                                    toast.error("Failed to save reply");
+                                                  }
                                                 }}
                                               >
                                                 Save
@@ -2779,7 +2906,7 @@ export default function EmployeeProfile() {
                       Health Check-Ups
                     </CardTitle>
                     <CardDescription>
-                      Manage health examinations and G-Investigations
+                      Manage employee health check-ups and medical examinations
                     </CardDescription>
                   </div>
                   <Button onClick={() => setIsCheckupDialogOpen(true)}>
@@ -2794,148 +2921,77 @@ export default function EmployeeProfile() {
                     No check-ups scheduled
                   </p>
                 ) : (
-                  <div className="space-y-4">
-                    {healthCheckups.map((checkup) => (
-                      <Card key={checkup.id} className="p-4">
-                        <div className="space-y-4">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <p className="font-semibold">
-                                  {checkup.investigation_name ||
-                                    gInvestigations.find(
-                                      (g) => g.id === checkup.investigation_id
-                                    )?.name ||
-                                    "Investigation"}
-                                </p>
-                                <Badge
-                                  variant={
-                                    checkup.status === "done"
-                                      ? "default"
-                                      : checkup.status === "open"
-                                      ? "destructive"
-                                      : "secondary"
-                                  }
-                                >
-                                  {checkup.status.toUpperCase()}
-                                </Badge>
-                              </div>
-                              <div className="text-sm space-y-1">
-                                <p>
-                                  <span className="text-muted-foreground">
-                                    Appointment:
-                                  </span>{" "}
-                                  <span className="font-medium">
-                                    {checkup.appointment_date
-                                      ? new Date(
-                                          checkup.appointment_date
-                                        ).toLocaleDateString("en-US", {
-                                          year: "numeric",
-                                          month: "long",
-                                          day: "numeric",
-                                        })
-                                      : "Not set"}
-                                  </span>
-                                </p>
-                                {checkup.completion_date && (
-                                  <p>
-                                    <span className="text-muted-foreground">
-                                      Completed:
-                                    </span>{" "}
-                                    <span className="font-medium">
-                                      {new Date(
-                                        checkup.completion_date
-                                      ).toLocaleDateString("en-US", {
-                                        year: "numeric",
-                                        month: "long",
-                                        day: "numeric",
-                                      })}
-                                    </span>
-                                  </p>
-                                )}
-                                {checkup.notes && (
-                                  <p className="text-muted-foreground">
-                                    {checkup.notes}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
+                  <div className="space-y-2">
+                    {healthCheckups.map((checkup) => {
+                      const gInvestigation = gInvestigations.find(
+                        (g) => g.id === checkup.investigation_id || g.name === checkup.investigation_name
+                      );
+                      const displayName = gInvestigation?.name || checkup.investigation_name || "Investigation";
+
+                      return (
+                        <div
+                          key={checkup.id}
+                          className="flex items-center justify-between p-3 border rounded-lg"
+                        >
+                          <div className="flex-1">
+                            <p className="font-medium">{displayName}</p>
+                            {checkup.appointment_date && (
+                              <p className="text-sm text-muted-foreground">
+                                Appointment: {new Date(checkup.appointment_date).toLocaleDateString()}
+                              </p>
+                            )}
+                            {checkup.notes && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {checkup.notes}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Select
+                              value={checkup.status}
+                              onValueChange={async (newStatus: "done" | "open" | "planned") => {
+                                const updates: any = { status: newStatus };
+                                
+                                // If marking as done, set completion date to today
+                                if (newStatus === "done" && !checkup.completion_date) {
+                                  updates.completion_date = new Date().toISOString().split("T")[0];
+                                }
+                                
+                                await handleUpdateCheckup(checkup.id, updates);
+                              }}
+                            >
+                              <SelectTrigger className="w-[110px] h-8">
+                                <SelectValue>
+                                  <Badge variant={checkup.status === 'done' ? 'default' : 'secondary'} className="border-0">
+                                    {checkup.status}
+                                  </Badge>
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="open">
+                                  <Badge variant="secondary" className="border-0">open</Badge>
+                                </SelectItem>
+                                <SelectItem value="planned">
+                                  <Badge variant="secondary" className="border-0">planned</Badge>
+                                </SelectItem>
+                                <SelectItem value="done">
+                                  <Badge variant="default" className="border-0">done</Badge>
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
                             <Button
                               variant="ghost"
                               size="sm"
                               className="text-destructive hover:text-destructive"
-                              onClick={() => handleDeleteCheckup(checkup.id)}
+                              onClick={() => handleDeleteCheckup(checkup.id, displayName)}
+                              title="Delete check-up"
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
                           </div>
-
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Select
-                              value={checkup.status}
-                              onValueChange={(value) =>
-                                handleUpdateCheckup(checkup.id, {
-                                  status: value,
-                                })
-                              }
-                            >
-                              <SelectTrigger className="w-32">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="planned">Planned</SelectItem>
-                                <SelectItem value="open">Open</SelectItem>
-                                <SelectItem value="done">Done</SelectItem>
-                              </SelectContent>
-                            </Select>
-
-                            {checkup.status === "done" &&
-                              !checkup.completion_date && (
-                                <Input
-                                  type="date"
-                                  placeholder="Completion date"
-                                  className="w-48"
-                                  onChange={(e) =>
-                                    handleUpdateCheckup(checkup.id, {
-                                      completion_date: e.target.value,
-                                    })
-                                  }
-                                />
-                              )}
-
-                            <div className="flex gap-2">
-                              {checkup.certificate_url ? (
-                                <Button variant="outline" size="sm" asChild>
-                                  <a
-                                    href={checkup.certificate_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    <FileText className="w-4 h-4 mr-2" />
-                                    View Certificate
-                                  </a>
-                                </Button>
-                              ) : (
-                                <Button variant="outline" size="sm" asChild>
-                                  <label className="cursor-pointer">
-                                    <Upload className="w-4 h-4 mr-2" />
-                                    Upload Certificate
-                                    <input
-                                      type="file"
-                                      className="hidden"
-                                      accept=".pdf,.jpg,.jpeg,.png"
-                                      onChange={(e) =>
-                                        handleCertificateUpload(e, checkup.id)
-                                      }
-                                    />
-                                  </label>
-                                </Button>
-                              )}
-                            </div>
-                          </div>
                         </div>
-                      </Card>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -2998,7 +3054,7 @@ export default function EmployeeProfile() {
                         </SelectTrigger>
                         <SelectContent>
                           {gInvestigations.map((inv) => (
-                            <SelectItem key={inv.id} value={inv.id}>
+                            <SelectItem key={inv.id} value={inv.name}>
                               {inv.name}
                             </SelectItem>
                           ))}

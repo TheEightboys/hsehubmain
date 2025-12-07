@@ -24,6 +24,12 @@ import {
   Target,
   Tag,
   Save,
+  Upload,
+  Loader2,
+  FileText,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -98,7 +104,7 @@ const baseSchema = z.object({
 
 export default function Settings() {
   const { user, loading, companyId, userRole } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [loadingData, setLoadingData] = useState(false);
@@ -109,7 +115,6 @@ export default function Settings() {
   const [currentTableName, setCurrentTableName] = useState("");
   const [forceDialogOpen, setForceDialogOpen] = useState(false);
 
-  // State for each master data type
   const [departments, setDepartments] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
   const [jobRoles, setJobRoles] = useState<any[]>([]);
@@ -117,6 +122,7 @@ export default function Settings() {
   const [riskCategories, setRiskCategories] = useState<any[]>([]);
   const [trainingTypes, setTrainingTypes] = useState<any[]>([]);
   const [auditCategories, setAuditCategories] = useState<any[]>([]);
+  const [measureBuildingBlocks, setMeasureBuildingBlocks] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
 
   // Approval Process State
@@ -137,6 +143,12 @@ export default function Settings() {
   const [addingCriterionForISO, setAddingCriterionForISO] = useState<
     string | null
   >(null);
+  const [selectedCriteria, setSelectedCriteria] = useState<string[]>([]);
+  
+  // ISO Criteria Import State
+  const [isoCriteriaData, setIsoCriteriaData] = useState<any>({});
+  const [importingISO, setImportingISO] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<string[]>([]);
 
   // G-Investigations State
   const [selectedGInvestigations, setSelectedGInvestigations] = useState<
@@ -269,6 +281,7 @@ export default function Settings() {
       fetchApprovalWorkflows();
       fetchISOStandards();
       fetchGInvestigations();
+      fetchAllIsoCriteria();
     }
   }, [user, loading, navigate, companyId]);
 
@@ -277,7 +290,7 @@ export default function Settings() {
 
     setLoadingData(true);
     try {
-      const [depts, locs, roles, exposure, risk, training, audit, emps] =
+      const [depts, locs, roles, exposure, risk, training, audit, measures, emps] =
         await Promise.all([
           supabase.from("departments").select("*").eq("company_id", companyId),
           supabase.from("locations").select("*").eq("company_id", companyId),
@@ -299,6 +312,10 @@ export default function Settings() {
             .select("*")
             .eq("company_id", companyId),
           supabase
+            .from("measure_building_blocks")
+            .select("*")
+            .eq("company_id", companyId),
+          supabase
             .from("employees")
             .select("id, full_name")
             .eq("company_id", companyId)
@@ -312,6 +329,7 @@ export default function Settings() {
       setRiskCategories(risk.data || []);
       setTrainingTypes(training.data || []);
       setAuditCategories(audit.data || []);
+      setMeasureBuildingBlocks(measures.data || []);
       setEmployees(emps.data || []);
     } catch (err: unknown) {
       const e = err as { message?: string } | Error | null;
@@ -847,6 +865,351 @@ export default function Settings() {
         description: message,
         variant: "destructive",
       });
+    }
+  };
+
+  // Import ISO Criteria from JSON files
+  const importIsoCriteria = async (isoCode: string) => {
+    if (!companyId) {
+      toast({
+        title: "Error",
+        description: "Company ID not found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setImportingISO(isoCode);
+
+    try {
+      // Load the appropriate JSON file
+      let jsonData;
+      if (isoCode === "ISO_9001") {
+        jsonData = await import("../data/iso_9001_2015_complete.json");
+      } else if (isoCode === "ISO_14001") {
+        jsonData = await import("../data/iso_14001_2015_complete.json");
+      } else if (isoCode === "ISO_45001") {
+        jsonData = await import("../data/iso_45001_2015_complete.json");
+      } else {
+        throw new Error("Unknown ISO code");
+      }
+
+      const data = jsonData.default || jsonData;
+
+      // Insert sections
+      for (const section of data.sections) {
+        const { data: sectionData, error: sectionError } = await supabase
+          .from("iso_criteria_sections")
+          .upsert(
+            {
+              iso_code: data.iso_code,
+              section_number: section.section_number,
+              title: section.title,
+              title_en: section.title, // Store English text in title_en
+              sort_order: section.sort_order,
+            },
+            { onConflict: "iso_code,section_number" }
+          )
+          .select()
+          .single();
+
+        if (sectionError) throw sectionError;
+
+        // Insert subsections
+        for (const subsection of section.subsections) {
+          const { data: subsectionData, error: subsectionError } =
+            await supabase
+              .from("iso_criteria_subsections")
+              .upsert(
+                {
+                  section_id: sectionData.id,
+                  subsection_number: subsection.subsection_number,
+                  title: subsection.title,
+                  title_en: subsection.title, // Store English text in title_en
+                  sort_order: subsection.sort_order,
+                },
+                { onConflict: "section_id,subsection_number" }
+              )
+              .select()
+              .single();
+
+          if (subsectionError) throw subsectionError;
+
+          // Insert questions
+          for (let i = 0; i < subsection.questions.length; i++) {
+            const { error: questionError } = await supabase
+              .from("iso_criteria_questions")
+              .upsert({
+                subsection_id: subsectionData.id,
+                question_text: subsection.questions[i],
+                question_text_en: subsection.questions[i], // Store English text in question_text_en
+                sort_order: i + 1,
+              });
+
+            if (questionError) throw questionError;
+          }
+        }
+      }
+
+      toast({
+        title: "Success",
+        description: `${data.iso_name} criteria imported successfully! (${data.total_criteria} criteria)`,
+      });
+
+      // Refresh the criteria data
+      await fetchIsoCriteria(isoCode);
+    } catch (error: any) {
+      console.error("Error importing ISO criteria:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to import ISO criteria",
+        variant: "destructive",
+      });
+    } finally {
+      setImportingISO(null);
+    }
+  };
+
+  // Fetch ISO Criteria from database
+  const fetchIsoCriteria = async (isoCode: string) => {
+    try {
+      const { data: sections, error } = await supabase
+        .from("iso_criteria_sections")
+        .select(
+          `
+          *,
+          subsections:iso_criteria_subsections(
+            *,
+            questions:iso_criteria_questions(*)
+          )
+        `
+        )
+        .eq("iso_code", isoCode)
+        .order("sort_order");
+
+      if (error) throw error;
+
+      setIsoCriteriaData((prev: any) => ({
+        ...prev,
+        [isoCode]: sections,
+      }));
+    } catch (error: any) {
+      console.error("Error fetching ISO criteria:", error);
+    }
+  };
+
+  // Fetch all imported ISO criteria on page load
+  const fetchAllIsoCriteria = async () => {
+    try {
+      // Check which ISO standards have been imported
+      const { data: sections, error } = await supabase
+        .from("iso_criteria_sections")
+        .select("iso_code")
+        .limit(1);
+
+      if (error) throw error;
+
+      if (sections && sections.length > 0) {
+        // Get unique ISO codes
+        const { data: allSections } = await supabase
+          .from("iso_criteria_sections")
+          .select("iso_code");
+
+        const uniqueIsoCodes = [
+          ...new Set(allSections?.map((s) => s.iso_code) || []),
+        ];
+
+        // Fetch criteria for each imported ISO
+        for (const isoCode of uniqueIsoCodes) {
+          await fetchIsoCriteria(isoCode as string);
+        }
+      }
+    } catch (error: any) {
+      console.error("Error fetching all ISO criteria:", error);
+    }
+  };
+
+  // Update English translations for existing ISO criteria data
+  const updateEnglishTranslations = async () => {
+    try {
+      setLoadingData(true);
+      
+      toast({
+        title: "Updating translations...",
+        description: "Deleting old data and re-importing with English translations",
+      });
+
+      // Get list of imported ISO codes
+      const { data: existingISOs } = await supabase
+        .from('iso_criteria_sections')
+        .select('iso_code');
+      
+      const uniqueIsoCodes = [...new Set(existingISOs?.map(s => s.iso_code) || [])];
+      
+      if (uniqueIsoCodes.length === 0) {
+        toast({
+          title: "No data found",
+          description: "No ISO criteria found in database. Please import ISO standards first.",
+          variant: "destructive",
+        });
+        setLoadingData(false);
+        return;
+      }
+
+      // Delete existing data and re-import for each ISO standard
+      for (const isoCode of uniqueIsoCodes) {
+        // Delete existing sections (cascade will delete subsections and questions)
+        await supabase
+          .from('iso_criteria_sections')
+          .delete()
+          .eq('iso_code', isoCode);
+        
+        // Re-import with updated function that includes English translations
+        await importIsoCriteria(isoCode as string);
+      }
+
+      toast({
+        title: "Success!",
+        description: `ISO criteria re-imported successfully with English translations for ${uniqueIsoCodes.length} standard(s)!`,
+      });
+      
+      // Refresh the data
+      await fetchAllIsoCriteria();
+    } catch (error: any) {
+      console.error("Error updating English translations:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update English translations",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  // Add German translations to ISO criteria
+  const addGermanTranslations = async () => {
+    try {
+      setLoadingData(true);
+      
+      toast({
+        title: "Adding German translations...",
+        description: "Updating ISO criteria with German text",
+      });
+
+      // German translations for ISO 45001 sections
+      const germanSections: Record<string, string> = {
+        '1': 'Kontext der Organisation',
+        '2': 'Führung (Leadership)',
+        '3': 'Planung',
+        '4': 'Unterstützung',
+        '5': 'Betrieb',
+        '6': 'Bewertung der Leistung',
+        '7': 'Verbesserung',
+        '8': 'Glossar'
+      };
+
+      // German translations for ISO 45001 subsections
+      const germanSubsections: Record<string, string> = {
+        '1.1': 'Externe und interne Themen identifizieren',
+        '1.2': 'Interessierte Parteien und deren Anforderungen',
+        '1.3': 'Anwendungsbereich des Arbeitsschutzmanagementsystems',
+        '1.4': 'Managementsystem und Schnittstellen',
+        '2.1': 'Verantwortung und Verpflichtung der obersten Leitung',
+        '2.2': 'Arbeitsschutzpolitik',
+        '2.3': 'Rollen, Verantwortlichkeiten und Befugnisse',
+        '2.4': 'Beteiligung und Konsultation der Beschäftigten',
+        '2.5': 'Besondere Beauftragte und Fachfunktionen',
+        '3.1': 'Maßnahmen zum Umgang mit Risiken und Chancen',
+        '3.2': 'Rechtliche und andere Anforderungen',
+        '3.3': 'Arbeitsschutzziele',
+        '3.4': 'Notfall- und Krisenplanung',
+        '3.6': 'Detaillierte Zielplanung',
+        '4.1': 'Ressourcenmanagement & Budget',
+        '4.2': 'Kompetenz und Qualifikation',
+        '4.3': 'Bewusstsein und Kommunikation',
+        '4.4': 'Dokumentierte Information',
+        '4.5': 'Wissensmanagement',
+        '4.6': 'Kommunikation & Dokumentation',
+        '5.1': 'Betriebliche Planung und Steuerung',
+        '5.2': 'Gefährdungsbeurteilung & Schutzmaßnahmen',
+        '5.3': 'Management of Change',
+        '5.4': 'Beschaffung & Lieferantenmanagement',
+        '5.5': 'Notfallvorsorge und Gefahrenabwehr',
+        '5.6': 'Instandhaltungsmanagement',
+        '5.7': 'Betriebliche Steuerung und Prozessorganisation',
+        '5.9': 'Sicherheits- und Gesundheitsmanagement',
+        '5.10': 'Nachhaltigkeit und Umweltschutz',
+        '6.1': 'Überwachung, Messung, Analyse',
+        '6.2': 'Interne Audits',
+        '6.3': 'Managementbewertung',
+        '6.4': 'Feedback & Lernen',
+        '7.1': 'Kontinuierliche Verbesserung',
+        '7.2': 'Nichtkonformitäten & Korrekturmaßnahmen',
+        '7.3': 'Management psychosozialer Risiken',
+        '7.4': 'Lessons Learned',
+        '7.5': 'Compliance & Ethik',
+        '7.6': 'Innovation und Gesundheitsprogramme',
+        '8.1': 'Zusätzliche Informationen'
+      };
+
+      let updatedCount = 0;
+
+      // Update sections
+      const { data: sections } = await supabase
+        .from('iso_criteria_sections')
+        .select('id, section_number')
+        .eq('iso_code', 'ISO_45001');
+
+      for (const section of sections || []) {
+        const germanTitle = germanSections[section.section_number];
+        if (germanTitle) {
+          await supabase
+            .from('iso_criteria_sections')
+            .update({ title: germanTitle })
+            .eq('id', section.id);
+          updatedCount++;
+        }
+      }
+
+      // Update subsections
+      const { data: subsections } = await supabase
+        .from('iso_criteria_subsections')
+        .select(`
+          id,
+          subsection_number,
+          section_id,
+          iso_criteria_sections!inner(iso_code)
+        `)
+        .eq('iso_criteria_sections.iso_code', 'ISO_45001');
+
+      for (const subsection of subsections || []) {
+        const germanTitle = germanSubsections[subsection.subsection_number];
+        if (germanTitle) {
+          await supabase
+            .from('iso_criteria_subsections')
+            .update({ title: germanTitle })
+            .eq('id', subsection.id);
+          updatedCount++;
+        }
+      }
+
+      toast({
+        title: "Success!",
+        description: `German translations added successfully! (${updatedCount} items updated)`,
+      });
+      
+      // Refresh the data
+      await fetchAllIsoCriteria();
+    } catch (error: any) {
+      console.error("Error adding German translations:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add German translations",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingData(false);
     }
   };
 
@@ -1430,7 +1793,6 @@ export default function Settings() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Description</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -1438,7 +1800,7 @@ export default function Settings() {
               {data.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={3}
+                    colSpan={2}
                     className="text-center py-8 text-muted-foreground"
                   >
                     No items found. Click "Add {title.slice(0, -1)}" to create
@@ -1450,9 +1812,6 @@ export default function Settings() {
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">
                       {item.name || item.title}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {item.description || "-"}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
@@ -2562,7 +2921,6 @@ export default function Settings() {
                               <TableRow>
                                 <TableHead>Category</TableHead>
                                 <TableHead>Type</TableHead>
-                                <TableHead>Description</TableHead>
                                 <TableHead className="text-right">
                                   Actions
                                 </TableHead>
@@ -2580,9 +2938,6 @@ export default function Settings() {
                                       <Badge variant="secondary">
                                         {t("settings.predefined")}
                                       </Badge>
-                                    </TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                      -
                                     </TableCell>
                                     <TableCell className="text-right text-muted-foreground text-xs">
                                       Cannot delete
@@ -2608,9 +2963,6 @@ export default function Settings() {
                                     </TableCell>
                                     <TableCell>
                                       <Badge>{t("settings.custom")}</Badge>
-                                    </TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                      {cat.description || "-"}
                                     </TableCell>
                                     <TableCell className="text-right">
                                       <div className="flex justify-end gap-2">
@@ -2649,6 +3001,7 @@ export default function Settings() {
                     </CardContent>
                   </Card>
 
+
                   {/* Measure Building Blocks - Inline Add */}
                   <Card>
                     <CardHeader>
@@ -2666,31 +3019,65 @@ export default function Settings() {
                         <div className="flex gap-2">
                           <Input
                             placeholder="Enter measure building block name..."
-                            onKeyDown={(e) => {
+                            onKeyDown={async (e) => {
                               if (e.key === "Enter") {
                                 const input = e.currentTarget;
                                 const value = input.value.trim();
-                                if (value) {
-                                  toast({
-                                    title: "Success",
-                                    description: `Measure building block "${value}" added`,
-                                  });
-                                  input.value = "";
+                                if (value && companyId) {
+                                  const { error } = await supabase
+                                    .from("measure_building_blocks")
+                                    .insert([
+                                      {
+                                        name: value,
+                                        company_id: companyId,
+                                      },
+                                    ]);
+                                  if (error) {
+                                    toast({
+                                      title: "Error",
+                                      description: error.message,
+                                      variant: "destructive",
+                                    });
+                                  } else {
+                                    toast({
+                                      title: "Success",
+                                      description: `Measure building block "${value}" added`,
+                                    });
+                                    input.value = "";
+                                    fetchAllData();
+                                  }
                                 }
                               }
                             }}
                           />
                           <Button
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               const input = e.currentTarget
                                 .previousElementSibling as HTMLInputElement;
                               const value = input?.value.trim();
-                              if (value) {
-                                toast({
-                                  title: "Success",
-                                  description: `Measure building block "${value}" added`,
-                                });
-                                if (input) input.value = "";
+                              if (value && companyId) {
+                                const { error } = await supabase
+                                  .from("measure_building_blocks")
+                                  .insert([
+                                    {
+                                      name: value,
+                                      company_id: companyId,
+                                    },
+                                  ]);
+                                if (error) {
+                                  toast({
+                                    title: "Error",
+                                    description: error.message,
+                                    variant: "destructive",
+                                  });
+                                } else {
+                                  toast({
+                                    title: "Success",
+                                    description: `Measure building block "${value}" added`,
+                                  });
+                                  if (input) input.value = "";
+                                  fetchAllData();
+                                }
                               }
                             }}
                           >
@@ -2702,12 +3089,81 @@ export default function Settings() {
                           Add reusable measure templates like Elimination,
                           Substitution, Engineering Controls, etc.
                         </p>
+
+                        {/* Measure Building Blocks List */}
+                        <div className="rounded-md border">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Name</TableHead>
+                                <TableHead className="text-right">
+                                  Actions
+                                </TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {measureBuildingBlocks.length === 0 ? (
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={2}
+                                    className="text-center py-8 text-muted-foreground"
+                                  >
+                                    No measure building blocks found. Add your first
+                                    block above.
+                                  </TableCell>
+                                </TableRow>
+                              ) : (
+                                measureBuildingBlocks.map((block) => (
+                                  <TableRow key={block.id}>
+                                    <TableCell className="font-medium">
+                                      {block.name}
+                                    </TableCell>
+                                    <TableCell className="text-right">
+                                      <div className="flex justify-end gap-2">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={async () => {
+                                            if (!companyId) return;
+                                            const { error } = await supabase
+                                              .from("measure_building_blocks")
+                                              .delete()
+                                              .eq("id", block.id)
+                                              .eq("company_id", companyId);
+
+                                            if (error) {
+                                              toast({
+                                                title: "Error",
+                                                description: error.message,
+                                                variant: "destructive",
+                                              });
+                                            } else {
+                                              toast({
+                                                title: "Success",
+                                                description: "Measure building block deleted",
+                                              });
+                                              fetchAllData();
+                                            }
+                                          }}
+                                        >
+                                          <Trash2 className="w-4 h-4 text-destructive" />
+                                        </Button>
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
 
-                  {/* Audit Categories - Moved from Intervals tab */}
-                  {renderTable(auditCategories, t("settings.auditCategories"))}
+
+
+                  {/* Risk Matrix Label - Moved from Intervals tab */}
+                  {renderTable(auditCategories, "Risk Matrix Label")}
 
                   {/* ISO Selection moved to Intervals tab */}
                 </div>
@@ -2719,13 +3175,20 @@ export default function Settings() {
                   {/* ISO Selection & Criteria - Moved from Catalogs */}
                   <Card>
                     <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Tag className="w-5 h-5" />
-                        {t("settings.isoSelection")}
-                      </CardTitle>
-                      <CardDescription>
-                        {t("settings.isoSelectionDesc")}
-                      </CardDescription>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="flex items-center gap-2">
+                            <Tag className="w-5 h-5" />
+                            {t("settings.isoSelection")}
+                          </CardTitle>
+                          <CardDescription>
+                            {t("settings.isoSelectionDesc")}
+                          </CardDescription>
+                        </div>
+                        <Badge className="bg-black text-white hover:bg-black/90">
+                          Active
+                        </Badge>
+                      </div>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-6">
@@ -2755,6 +3218,8 @@ export default function Settings() {
                                         ...selectedISOs,
                                         iso.id,
                                       ]);
+                                      // Auto-fetch criteria for this ISO
+                                      await fetchIsoCriteria(iso.id);
                                     } else {
                                       await deleteISOStandard(iso.id);
                                       setSelectedISOs(
@@ -2967,6 +3432,23 @@ export default function Settings() {
                                             type="checkbox"
                                             className="mt-0.5 w-4 h-4 cursor-pointer"
                                             id={`criterion-${isoId}-${idx}`}
+                                            checked={selectedCriteria.includes(
+                                              `${isoId}-${idx}`
+                                            )}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedCriteria([
+                                                  ...selectedCriteria,
+                                                  `${isoId}-${idx}`,
+                                                ]);
+                                              } else {
+                                                setSelectedCriteria(
+                                                  selectedCriteria.filter(
+                                                    (c) => c !== `${isoId}-${idx}`
+                                                  )
+                                                );
+                                              }
+                                            }}
                                           />
                                           <label
                                             htmlFor={`criterion-${isoId}-${idx}`}
@@ -3110,6 +3592,160 @@ export default function Settings() {
                                 {t("settings.criteriaInfoNote")}
                               </p>
                             </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* ISO Criteria Management */}
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="flex items-center gap-2">
+                            <FileText className="w-5 h-5" />
+                            {t("settings.isoCriteriaManagement")}
+                          </CardTitle>
+                          <CardDescription>
+                            {t("settings.isoCriteriaManagementDesc")}
+                          </CardDescription>
+                        </div>
+
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-6">
+                        {/* Display Imported Criteria for Selected ISOs */}
+                        {selectedISOs.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                            <p>{t("settings.noISOSelected")}</p>
+                            <p className="text-sm">{t("settings.selectISOAbove")}</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {selectedISOs.map((isoId) => {
+                              // Map ISO IDs to ISO codes
+                              const isoCodeMap: { [key: string]: string } = {
+                                "ISO_45001": "ISO_45001",
+                                "ISO_14001": "ISO_14001",
+                                "ISO_9001": "ISO_9001",
+                              };
+                              
+                              const isoCode = isoCodeMap[isoId];
+                              if (!isoCode) return null;
+                              
+                              const sections = isoCriteriaData[isoCode];
+                              if (!sections || sections.length === 0) return null;
+
+                              return (
+                                <div key={isoId} className="space-y-2">
+                                  <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="default">
+                                        {isoCode === "ISO_9001" 
+                                          ? "ISO 9001:2015" 
+                                          : isoCode === "ISO_14001" 
+                                          ? "ISO 14001:2015" 
+                                          : "ISO 45001:2015"}
+                                      </Badge>
+                                      <span className="text-sm text-muted-foreground">
+                                        {sections?.length || 0} {t("settings.sections")}
+                                      </span>
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => fetchIsoCriteria(isoCode)}
+                                    >
+                                      <RefreshCw className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                  
+                                  {/* Sections Display */}
+                                  <div className="space-y-2">
+                                    {sections?.map((section: any) => {
+                                      const sectionKey = `${isoCode}-${section.id}`;
+                                      const isExpanded = expandedSections.includes(sectionKey);
+                                      
+                                      return (
+                                        <div key={section.id} className="border rounded-lg">
+                                          <button
+                                            onClick={() => {
+                                              setExpandedSections(prev =>
+                                                isExpanded
+                                                  ? prev.filter(k => k !== sectionKey)
+                                                  : [...prev, sectionKey]
+                                              );
+                                            }}
+                                            className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              {isExpanded ? (
+                                                <ChevronDown className="w-4 h-4" />
+                                              ) : (
+                                                <ChevronRight className="w-4 h-4" />
+                                              )}
+                                              <span className="font-medium">
+                                                {section.section_number}. {language === 'en' ? (section.title_en || section.title) : section.title}
+                                              </span>
+                                            </div>
+                                            <Badge variant="outline">
+                                              {section.subsections?.length || 0} {t("settings.subsections")}
+                                            </Badge>
+                                          </button>
+                                          
+                                          {isExpanded && (
+                                            <div className="p-3 space-y-3 border-t bg-muted/20">
+                                              {section.subsections?.map((subsection: any) => (
+                                                <div key={subsection.id} className="space-y-2">
+                                                  <h5 className="font-medium text-sm">
+                                                    {subsection.subsection_number} {language === 'en' ? (subsection.title_en || subsection.title) : subsection.title}
+                                                  </h5>
+                                                  <div className="space-y-2 pl-4">
+                                                    {subsection.questions?.map((question: any) => (
+                                                      <div
+                                                        key={question.id}
+                                                        className="flex items-start gap-3 p-2 bg-background rounded border"
+                                                      >
+                                                        <div className="flex gap-2 mt-1">
+                                                          <label className="flex items-center gap-1 cursor-pointer">
+                                                            <input
+                                                              type="checkbox"
+                                                              className="w-4 h-4"
+                                                            />
+                                                            <span className="text-xs text-muted-foreground">
+                                                              {t("settings.implemented")}
+                                                            </span>
+                                                          </label>
+                                                          <label className="flex items-center gap-1 cursor-pointer">
+                                                            <input
+                                                              type="checkbox"
+                                                              className="w-4 h-4"
+                                                            />
+                                                            <span className="text-xs text-muted-foreground">
+                                                              {t("settings.satisfied")}
+                                                            </span>
+                                                          </label>
+                                                        </div>
+                                                        <p className="text-sm flex-1">
+                                                          {language === 'en' ? (question.question_text_en || question.question_text) : question.question_text}
+                                                        </p>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

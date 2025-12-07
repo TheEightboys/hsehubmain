@@ -1,0 +1,65 @@
+{
+  "iso_code": "ISO_9001",
+  "iso_name": "ISO 9001:2015",
+  "total_criteria": 95,
+  "sections": [
+    {
+      "id": "1",
+      "title": "Kontext der Organisation",
+      "subsections": [
+        {
+          "id": "1.1",
+          "title": "Interne Themen identifizieren",
+          "criteria": [
+            "Welche organisatorischen Strukturen (Abteilungen, Führungsebenen, Ressourcen) beeinflussen das Qualitätsmanagement?",
+            "Wie wird die Unternehmensstrategie in Bezug auf Qualität berücksichtigt?",
+            "Werden Stärken und Schwächen ermittelt und dokumentiert?"
+          ]
+        },
+        {
+          "id": "1.2",
+          "title": "Externe Themen identifizieren",
+          "criteria": [
+            "Welche Marktbedingungen beeinflussen das QMS?",
+            "Wie werden gesetzliche oder behördliche Anforderungen identifiziert und integriert?",
+            "Gibt es technologische Entwicklungen, die das QM beeinflussen?"
+          ]
+        },
+        {
+          "id": "1.3",
+          "title": "Interessierte Parteien und deren Anforderungen",
+          "criteria": [
+            "Welche internen interessierten Parteien beeinflussen das QMS?",
+            "Welche externen interessierten Parteien sind relevant?",
+            "Welche Anforderungen haben diese Stakeholder?",
+            "Wie werden Erwartungen erfasst und bewertet?",
+            "Gibt es Feedback-Prozesse für Stakeholder?",
+            "Wird der Klimawandel berücksichtigt?"
+          ]
+        },
+        {
+          "id": "1.4",
+          "title": "Dokumentation und Aktualisierung",
+          "criteria": [
+            "Sind alle relevanten Standorte, Abteilungen und Prozesse einbezogen?",
+            "Ist klar, welche Produkte/Dienstleistungen unter das QMS fallen?",
+            "Werden Ausschlüsse begründet und dokumentiert?",
+            "Ist der Scope des QMS intern und extern kommuniziert?"
+          ]
+        },
+        {
+          "id": "1.5",
+          "title": "Managementsystem und Schnittstellen",
+          "criteria": [
+            "Gibt es Beschreibung, wie QMS integriert ist (Organigramm, Prozesslandschaft)?",
+            "Wie werden Unternehmensziele mit Qualitätszielen verknüpft?",
+            "Sind Prozesse und Wechselwirkungen dokumentiert?",
+            "Wie werden Überschneidungen mit anderen Managementsystemen behandelt?",
+            "Werden Prozesse anhand KPIs überwacht und gesteuert?",
+            "Existiert Prozessverantwortung (Prozessowner)?"
+          ]
+        }
+      ]
+    }
+  ]
+}

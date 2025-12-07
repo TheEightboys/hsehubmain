@@ -1,0 +1,468 @@
+{
+  "iso_code": "ISO_14001",
+  "iso_name": "ISO 14001:2015",
+  "total_sections": 7,
+  "total_criteria": 110,
+  "sections": [
+    {
+      "section_number": "1",
+      "title": "Context of the Organization",
+      "sort_order": 1,
+      "subsections": [
+        {
+          "subsection_number": "1.1",
+          "title": "Identify External and Internal Issues",
+          "sort_order": 1,
+          "questions": [
+            "Which internal factors (structure, culture, technologies, resources) influence the EMS?",
+            "Which external factors (laws, market, societal expectations) affect the EMS?",
+            "How is climate change considered as an external factor (risks + opportunities)?",
+            "Are these issues regularly monitored and updated (e.g., SWOT, risk analysis)?",
+            "Are all climate-relevant processes considered (e.g., raw materials, supply chain)?",
+            "Which regional disposal infrastructures influence the EMS?"
+          ]
+        },
+        {
+          "subsection_number": "1.2",
+          "title": "Risk-based Approach in Climate Context",
+          "sort_order": 2,
+          "questions": [
+            "How are impacts of climate change integrated into environmental and climate strategy?",
+            "Are there processes for deriving actions from opportunities and risks?",
+            "Are these factors documented and regularly reviewed?",
+            "How do climate factors flow into strategic decisions?"
+          ]
+        },
+        {
+          "subsection_number": "1.3",
+          "title": "Expectations of Interested Parties (Stakeholders)",
+          "sort_order": 3,
+          "questions": [
+            "Which internal and external stakeholders are relevant?",
+            "What environmental and climate requirements do they have?",
+            "How are climate protection requirements (e.g., SBT, CSRD) captured and prioritized?",
+            "Are there routines for identifying changed requirements (surveys, assessments)?"
+          ]
+        },
+        {
+          "subsection_number": "1.4",
+          "title": "Scope of the Management System",
+          "sort_order": 4,
+          "questions": [
+            "Which locations, activities, products are included in the EMS?",
+            "Are all climate-relevant processes included?",
+            "Are exclusions justified and documented?",
+            "Is the scope communicated internally and externally?"
+          ]
+        },
+        {
+          "subsection_number": "1.5",
+          "title": "Interfaces to Other Management Systems",
+          "sort_order": 5,
+          "questions": [
+            "How is overlap with ISO 9001/50001 etc. handled?",
+            "Are exceptions transparently justified?"
+          ]
+        },
+        {
+          "subsection_number": "1.6",
+          "title": "Management System and Processes",
+          "sort_order": 6,
+          "questions": [
+            "Does a process landscape exist including environmental and climate-relevant processes?",
+            "Who are the process owners?",
+            "Are there KPIs for ecological aspects (CO₂, waste, energy)?",
+            "Are interfaces between processes identified and optimized?"
+          ]
+        }
+      ]
+    },
+    {
+      "section_number": "2",
+      "title": "Leadership",
+      "sort_order": 2,
+      "subsections": [
+        {
+          "subsection_number": "2.1",
+          "title": "Responsibility and Commitment of Management",
+          "sort_order": 1,
+          "questions": [
+            "How does top management demonstrate support for EMS and climate protection?",
+            "Are there adopted climate and environmental objectives?"
+          ]
+        },
+        {
+          "subsection_number": "2.2",
+          "title": "Environmental Policy",
+          "sort_order": 2,
+          "questions": [
+            "Does the environmental policy contain statements on climate protection and emission reduction?",
+            "Is it linked to the strategic direction?",
+            "Does it contain commitment to continuous improvement and compliance with requirements?",
+            "Is it regularly updated?",
+            "Does it contain commitments to waste prevention, recycling, sustainable procurement?",
+            "Does management actively support climate protection projects?"
+          ]
+        },
+        {
+          "subsection_number": "2.3",
+          "title": "Roles, Responsibilities and Authorities",
+          "sort_order": 3,
+          "questions": [
+            "Are environmental roles clearly defined?",
+            "Do responsible parties have authority to implement climate protection measures?",
+            "Are there backup arrangements?"
+          ]
+        },
+        {
+          "subsection_number": "2.4",
+          "title": "Participation and Consultation of Workers",
+          "sort_order": 4,
+          "questions": [
+            "How are employees involved (training, workshops, idea management)?",
+            "What communication channels exist?",
+            "Are there feedback opportunities?",
+            "How is information about environmental topics communicated?"
+          ]
+        }
+      ]
+    },
+    {
+      "section_number": "3",
+      "title": "Planning",
+      "sort_order": 3,
+      "subsections": [
+        {
+          "subsection_number": "3.1",
+          "title": "Actions to Address Risks and Opportunities",
+          "sort_order": 1,
+          "questions": [
+            "Are environmental and climate risks identified and assessed?",
+            "How are opportunities utilized (funding programs, green markets)?",
+            "Is there prioritization of actions?",
+            "Are there responsibilities and timeframes?"
+          ]
+        },
+        {
+          "subsection_number": "3.2",
+          "title": "Legal and Other Requirements",
+          "sort_order": 2,
+          "questions": [
+            "Does a legal register exist for environment/climate?",
+            "How are legal changes identified and implemented?",
+            "Are there voluntary climate targets (SBT, Net-Zero)?",
+            "Are commitments documented and tracked?"
+          ]
+        },
+        {
+          "subsection_number": "3.3",
+          "title": "Environmental Objectives and Planning",
+          "sort_order": 3,
+          "questions": [
+            "Are objectives formulated SMART?",
+            "Which KPIs are used (CO₂, energy, waste)?",
+            "Are actions, resources, responsible parties defined?",
+            "Is progress reported?",
+            "Are there concrete emission reduction and waste targets?"
+          ]
+        },
+        {
+          "subsection_number": "3.4",
+          "title": "Emergency and Crisis Planning",
+          "sort_order": 4,
+          "questions": [
+            "Are there scenarios for climate-related events (heat, flood, supply chains)?",
+            "Are there preventive measures (flood protection, emergency power)?",
+            "Are there plans for personnel absences or environmentally critical processes?"
+          ]
+        },
+        {
+          "subsection_number": "3.5",
+          "title": "Determination of Environmental Aspects",
+          "sort_order": 5,
+          "questions": [
+            "Are all processes assessed regarding environmental impact?",
+            "Is the life cycle approach considered?",
+            "Are there criteria/methods for assessing significance?",
+            "Are emission and resource aspects captured?",
+            "Are development projects involved in a timely manner?",
+            "Is the list regularly updated?",
+            "Are significant aspects integrated into objectives?",
+            "Are there action plans to reduce impacts?"
+          ]
+        },
+        {
+          "subsection_number": "3.6",
+          "title": "Hazardous Materials Management",
+          "sort_order": 6,
+          "questions": [
+            "Is there a hazardous materials register?",
+            "Is there CLP/GHS classification?",
+            "How are environmental impacts assessed?",
+            "Is the life cycle of hazardous materials considered?",
+            "Are exposure pathways assessed?",
+            "Are REACH/CLP requirements met?",
+            "Are changes monitored and implemented?"
+          ]
+        }
+      ]
+    },
+    {
+      "section_number": "4",
+      "title": "Support",
+      "sort_order": 4,
+      "subsections": [
+        {
+          "subsection_number": "4.1",
+          "title": "Resource Management & Infrastructure",
+          "sort_order": 1,
+          "questions": [
+            "Are sufficient resources available for environment/climate protection?",
+            "How are measuring devices and tools maintained?",
+            "Are there preventive maintenance plans?",
+            "Are waste management resources provided?"
+          ]
+        },
+        {
+          "subsection_number": "4.2",
+          "title": "Competence and Qualification",
+          "sort_order": 2,
+          "questions": [
+            "Are there training courses on environmental law, climate protection, waste, hazardous materials?",
+            "Are there needs analyses?",
+            "How is the qualification of external employees ensured?",
+            "Are there officers for hazardous materials management?"
+          ]
+        },
+        {
+          "subsection_number": "4.3",
+          "title": "Knowledge Preservation",
+          "sort_order": 3,
+          "questions": [
+            "How is knowledge secured (handovers, documentation)?",
+            "How are SDS and internal guidelines managed?",
+            "How are updates maintained?"
+          ]
+        },
+        {
+          "subsection_number": "4.4",
+          "title": "Documented Information",
+          "sort_order": 4,
+          "questions": [
+            "How are EMS documents controlled and versioned?",
+            "Are there guidelines for confidential data?",
+            "Are there authorization systems?"
+          ]
+        },
+        {
+          "subsection_number": "4.5",
+          "title": "Awareness and Communication",
+          "sort_order": 5,
+          "questions": [
+            "Which channels are used (newsletter, intranet, notices)?",
+            "Are there environmental campaigns?"
+          ]
+        },
+        {
+          "subsection_number": "4.6",
+          "title": "Communication & Documentation",
+          "sort_order": 6,
+          "questions": [
+            "How are updates communicated?",
+            "Are labels checked?",
+            "Is there a communication matrix?"
+          ]
+        }
+      ]
+    },
+    {
+      "section_number": "5",
+      "title": "Operation",
+      "sort_order": 5,
+      "subsections": [
+        {
+          "subsection_number": "5.1",
+          "title": "Operational Planning and Control",
+          "sort_order": 1,
+          "questions": [
+            "Are processes controlled to minimize environmental impacts?",
+            "Are CO₂, water, waste regularly monitored?",
+            "Are there SOPs for hazardous materials?",
+            "Are inspections conducted?",
+            "How is compliance with disposal companies ensured?",
+            "Are there control mechanisms in procurement?",
+            "Are hazardous materials correctly labeled and stored?"
+          ]
+        },
+        {
+          "subsection_number": "5.2",
+          "title": "Management of Change",
+          "sort_order": 2,
+          "questions": [
+            "How are changes assessed for environmental impact?",
+            "Are there approval processes?"
+          ]
+        },
+        {
+          "subsection_number": "5.3",
+          "title": "Procurement and Supplier Management",
+          "sort_order": 3,
+          "questions": [
+            "Are ecological criteria considered?",
+            "Are there supplier assessments?",
+            "Are ethical aspects considered?"
+          ]
+        },
+        {
+          "subsection_number": "5.4",
+          "title": "Operational Control & Process Organization",
+          "sort_order": 4,
+          "questions": [
+            "Are eco-design principles applied?",
+            "Are supply chains optimized for climate friendliness?",
+            "Are there emergency plans for environmental events?"
+          ]
+        },
+        {
+          "subsection_number": "5.5",
+          "title": "Maintenance Management",
+          "sort_order": 5,
+          "questions": [
+            "Is there preventive maintenance?",
+            "How are intervals managed?"
+          ]
+        },
+        {
+          "subsection_number": "5.6",
+          "title": "Emergency & Environmental Protection",
+          "sort_order": 6,
+          "questions": [
+            "Are service providers checked for environmental standards?",
+            "Are there reporting channels for violations?",
+            "Are there emergency plans for hazardous material incidents?",
+            "Are drills conducted?"
+          ]
+        },
+        {
+          "subsection_number": "5.7",
+          "title": "Disposal / Waste Management",
+          "sort_order": 7,
+          "questions": [
+            "Are all waste streams captured?",
+            "Are there separation systems?",
+            "Are there recycling targets?",
+            "Is disposal properly documented?",
+            "How are hazardous wastes separated and disposed of?",
+            "Are legal requirements met?",
+            "Are there waste metrics?"
+          ]
+        }
+      ]
+    },
+    {
+      "section_number": "6",
+      "title": "Performance Evaluation",
+      "sort_order": 6,
+      "subsections": [
+        {
+          "subsection_number": "6.1",
+          "title": "Monitoring and Measurement",
+          "sort_order": 1,
+          "questions": [
+            "Which environmental metrics are collected and analyzed?",
+            "Are hazardous material data monitored?",
+            "How are deviations documented?",
+            "Are there regular reports?"
+          ]
+        },
+        {
+          "subsection_number": "6.2",
+          "title": "Internal Audits",
+          "sort_order": 2,
+          "questions": [
+            "Are all environmentally relevant processes in the audit plan?",
+            "Are hazardous material and waste topics audited?",
+            "Are unannounced audits conducted?",
+            "How is auditor competence ensured?",
+            "How are audit results prioritized?"
+          ]
+        },
+        {
+          "subsection_number": "6.3",
+          "title": "Management Review",
+          "sort_order": 3,
+          "questions": [
+            "How often does management review take place?",
+            "How are results documented and used?",
+            "Do environmental and emission data flow in?",
+            "How are new objectives derived?"
+          ]
+        },
+        {
+          "subsection_number": "6.4",
+          "title": "Feedback & Learning",
+          "sort_order": 4,
+          "questions": [
+            "Are there lessons learned?",
+            "Is stakeholder feedback considered?"
+          ]
+        }
+      ]
+    },
+    {
+      "section_number": "7",
+      "title": "Improvement",
+      "sort_order": 7,
+      "subsections": [
+        {
+          "subsection_number": "7.1",
+          "title": "Continuous Improvement",
+          "sort_order": 1,
+          "questions": [
+            "Are there programs or workshops for resource conservation?",
+            "Are best practices shared?",
+            "Are there clear procedures for error cases?"
+          ]
+        },
+        {
+          "subsection_number": "7.2",
+          "title": "Non-conformities & Corrective Actions",
+          "sort_order": 2,
+          "questions": [
+            "Are there processes for reporting and processing environmental violations?",
+            "Are root cause analyses conducted?",
+            "Are measures checked for effectiveness?",
+            "Are repeat cases prevented?"
+          ]
+        },
+        {
+          "subsection_number": "7.3",
+          "title": "Substitution Management",
+          "sort_order": 3,
+          "questions": [
+            "Are hazardous substances checked for replacement?",
+            "Is there a structured approach for substitution?"
+          ]
+        },
+        {
+          "subsection_number": "7.4",
+          "title": "Innovation Management",
+          "sort_order": 4,
+          "questions": [
+            "Are climate-friendly innovations promoted?",
+            "Are employees encouraged to submit ideas?"
+          ]
+        },
+        {
+          "subsection_number": "7.5",
+          "title": "Compliance & Ethics",
+          "sort_order": 5,
+          "questions": [
+            "How are compliance requirements met?",
+            "How are business partners audited for environmental compliance?"
+          ]
+        }
+      ]
+    }
+  ]
+}

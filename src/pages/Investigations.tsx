@@ -101,6 +101,7 @@ export default function Investigations() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [exposureGroups, setExposureGroups] = useState<ExposureGroup[]>([]);
+  const [gInvestigations, setGInvestigations] = useState<any[]>([]);
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState("");
@@ -144,6 +145,7 @@ export default function Investigations() {
       fetchEmployees();
       fetchDepartments();
       fetchExposureGroups();
+      fetchGInvestigations();
     }
   }, [companyId]);
 
@@ -231,6 +233,28 @@ export default function Investigations() {
       setExposureGroups(data || []);
     } catch (error: any) {
       console.error("Error fetching exposure groups:", error);
+    }
+  };
+
+  const fetchGInvestigations = async () => {
+    if (!companyId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("g_investigations")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("name");
+
+      if (error) {
+        console.log("G-Investigations table not created yet");
+        setGInvestigations([]);
+        return;
+      }
+      setGInvestigations(data || []);
+    } catch (error) {
+      console.error("Error fetching G-Investigations:", error);
+      setGInvestigations([]);
     }
   };
 
@@ -519,7 +543,7 @@ export default function Investigations() {
               </CardDescription>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={exportToPDF}>
+              <Button onClick={exportToPDF}>
                 <FileDown className="w-4 h-4 mr-2" />
                 {t("investigations.exportPDF")}
               </Button>
@@ -547,15 +571,38 @@ export default function Investigations() {
                         <Label htmlFor="g_code">
                           {t("investigations.gCode")} *
                         </Label>
-                        <Input
-                          id="g_code"
-                          value={formData.g_code}
-                          onChange={(e) =>
-                            setFormData({ ...formData, g_code: e.target.value })
-                          }
-                          placeholder="z.B. G37, G11, G7"
-                          required
-                        />
+                        {gInvestigations.length === 0 ? (
+                          <div className="border rounded-md p-3 bg-muted/50">
+                            <p className="text-sm text-muted-foreground">
+                              <strong>No G-Investigations configured.</strong>
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Please go to{" "}
+                              <strong>
+                                Settings → Occupational Medical Care
+                              </strong>{" "}
+                              to configure G-Investigations.
+                            </p>
+                          </div>
+                        ) : (
+                          <Select
+                            value={formData.g_code}
+                            onValueChange={(value) =>
+                              setFormData({ ...formData, g_code: value })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select G-Investigation" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {gInvestigations.map((inv) => (
+                                <SelectItem key={inv.id} value={inv.name}>
+                                  {inv.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </div>
                       <div>
                         <Label htmlFor="assigned_to">
@@ -593,7 +640,9 @@ export default function Investigations() {
                         </Label>
                         <Input
                           id="start_date"
+                          name="inv_start_date"
                           type="date"
+                          autoComplete="off"
                           value={formData.start_date}
                           onChange={(e) =>
                             setFormData({
@@ -609,7 +658,9 @@ export default function Investigations() {
                         </Label>
                         <Input
                           id="due_date"
+                          name="inv_due_date"
                           type="date"
+                          autoComplete="off"
                           value={formData.due_date}
                           onChange={(e) =>
                             setFormData({
@@ -625,7 +676,9 @@ export default function Investigations() {
                         </Label>
                         <Input
                           id="appointment_date"
+                          name="inv_appointment_date"
                           type="date"
+                          autoComplete="off"
                           value={formData.appointment_date}
                           onChange={(e) =>
                             setFormData({
@@ -644,6 +697,8 @@ export default function Investigations() {
                         </Label>
                         <Input
                           id="doctor"
+                          name="investigation_doctor"
+                          autoComplete="off"
                           value={formData.doctor}
                           onChange={(e) =>
                             setFormData({ ...formData, doctor: e.target.value })
@@ -683,6 +738,8 @@ export default function Investigations() {
                       </Label>
                       <Textarea
                         id="description"
+                        name="investigation_description"
+                        autoComplete="off"
                         value={formData.description}
                         onChange={(e) =>
                           setFormData({
@@ -830,7 +887,6 @@ export default function Investigations() {
                     <TableHead>{t("common.lastName")}</TableHead>
                     <TableHead>{t("common.firstName")}</TableHead>
                     <TableHead>{t("common.department")}</TableHead>
-                    <TableHead>{t("common.location")}</TableHead>
                     <TableHead>{t("common.group")}</TableHead>
                     <TableHead>{t("investigations.gCode")}</TableHead>
                     <TableHead className="text-right">
@@ -888,7 +944,6 @@ export default function Investigations() {
                             <TableCell>
                               {item.employee.departments?.name || "—"}
                             </TableCell>
-                            <TableCell>—</TableCell>
                             <TableCell>
                               {item.employee.exposure_groups?.name || "—"}
                             </TableCell>

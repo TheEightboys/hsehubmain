@@ -14,8 +14,10 @@ import ActivityGroups from "./pages/ActivityGroups";
 import RiskAssessments from "./pages/RiskAssessments";
 import Measures from "./pages/Measures";
 import Audits from "./pages/Audits";
+import AuditDetails from "./pages/AuditDetails";
 import Tasks from "./pages/Tasks";
 import Training from "./pages/Training";
+import LessonEditor from "./pages/LessonEditor";
 import Incidents from "./pages/Incidents";
 import Investigations from "./pages/Investigations";
 import Settings from "./pages/Settings";
@@ -132,6 +134,14 @@ const App = () => (
                 }
               />
               <Route
+                path="/audits/:id"
+                element={
+                  <MainLayout>
+                    <AuditDetails />
+                  </MainLayout>
+                }
+              />
+              <Route
                 path="/tasks"
                 element={
                   <MainLayout>
@@ -144,6 +154,14 @@ const App = () => (
                 element={
                   <MainLayout>
                     <Training />
+                  </MainLayout>
+                }
+              />
+              <Route
+                path="/training/:courseId/lesson/:lessonId"
+                element={
+                  <MainLayout>
+                    <LessonEditor />
                   </MainLayout>
                 }
               />

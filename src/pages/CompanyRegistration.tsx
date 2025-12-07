@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Check, Building2, Loader2 } from "lucide-react";
+import { Check, Building2, Loader2, Eye, EyeOff } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -169,6 +169,8 @@ export default function CompanyRegistration() {
   >("standard");
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const {
     register,
@@ -496,12 +498,26 @@ export default function CompanyRegistration() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="password">Password *</Label>
-                        <Input
-                          id="password"
-                          type="password"
-                          {...register("password")}
-                          placeholder="••••••••"
-                        />
+                        <div className="relative">
+                          <Input
+                            id="password"
+                            type={showPassword ? "text" : "password"}
+                            {...register("password")}
+                            placeholder="••••••••"
+                            className="pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                         {errors.password && (
                           <p className="text-sm text-destructive mt-1">
                             {errors.password.message}
@@ -510,12 +526,26 @@ export default function CompanyRegistration() {
                       </div>
                       <div>
                         <Label htmlFor="confirmPassword">Confirm Password *</Label>
-                        <Input
-                          id="confirmPassword"
-                          type="password"
-                          {...register("confirmPassword")}
-                          placeholder="••••••••"
-                        />
+                        <div className="relative">
+                          <Input
+                            id="confirmPassword"
+                            type={showConfirmPassword ? "text" : "password"}
+                            {...register("confirmPassword")}
+                            placeholder="••••••••"
+                            className="pr-10"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {showConfirmPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                         {errors.confirmPassword && (
                           <p className="text-sm text-destructive mt-1">
                             {errors.confirmPassword.message}

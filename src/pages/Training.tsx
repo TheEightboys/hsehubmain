@@ -7,19 +7,16 @@ import {
   Plus,
   Search,
   GraduationCap,
+  Upload,
+  Trash2,
   Video,
   FileText,
   Type,
   Link,
   FileArchive,
   FolderOpen,
-  Trash2,
-  Upload,
-  Loader2,
-  CheckCircle2,
-  XCircle,
 } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
+import LessonCard from "@/components/training/LessonCard";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,7 +27,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -38,14 +34,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
@@ -65,17 +53,7 @@ const courseSchema = z.object({
   description: z.string().optional(),
 });
 
-const lessonSchema = z.object({
-  name: z.string().min(1, "Lesson name is required"),
-  type: z.enum(["subchapter", "video_audio", "pdf", "text", "website_link", "zip_file"]),
-  content_url: z.string().url("Please enter a valid URL").optional().or(z.literal("")),
-  content_text: z.string().optional(),
-  description: z.string().optional(),
-  tags: z.string().optional(),
-});
-
 type CourseFormData = z.infer<typeof courseSchema>;
-type LessonFormData = z.infer<typeof lessonSchema>;
 
 interface Course {
   id: string;
@@ -88,7 +66,7 @@ interface Lesson {
   id: string;
   course_id: string;
   name: string;
-  type: "subchapter" | "video_audio" | "pdf" | "text" | "website_link" | "zip_file";
+  type: "subchapter" | "video_audio" | "pdf" | "text" | "iframe";
   content_url: string | null;
   content_data: any;
   order_index: number;
@@ -104,32 +82,15 @@ export default function Training() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [selectedLesson, setSelectedLesson] = useState<Lesson | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [isCourseDialogOpen, setIsCourseDialogOpen] = useState(false);
-  const [isLessonDialogOpen, setIsLessonDialogOpen] = useState(false);
-  const [isLessonDetailOpen, setIsLessonDetailOpen] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
 
   const courseForm = useForm<CourseFormData>({
     resolver: zodResolver(courseSchema),
     defaultValues: {
       name: "",
       description: "",
-    },
-  });
-
-  const lessonForm = useForm<LessonFormData>({
-    resolver: zodResolver(lessonSchema),
-    defaultValues: {
-      name: "",
-      type: "video_audio",
-      content_url: "",
-      content_text: "",
-      description: "",
-      tags: "",
     },
   });
 
@@ -253,27 +214,18 @@ export default function Training() {
     }
   };
 
-  const onLessonSubmit = async (data: LessonFormData) => {
-    if (!selectedCourse) return;
+  const handleDuplicateLesson = async (lessonId: string) => {
+    const lessonToDuplicate = lessons.find((l) => l.id === lessonId);
+    if (!lessonToDuplicate || !selectedCourse) return;
 
     try {
-      // Prepare content data based on type
-      const contentData: any = {};
-
-      if (data.type === "text" && data.content_text) {
-        contentData.text_content = data.content_text;
-      }
-
-      if (data.description) contentData.description = data.description;
-      if (data.tags) contentData.tags = data.tags;
-
       const { error } = await supabase.from("course_lessons").insert([
         {
           course_id: selectedCourse.id,
-          name: data.name,
-          type: data.type,
-          content_url: data.content_url || null,
-          content_data: Object.keys(contentData).length > 0 ? contentData : null,
+          name: `${lessonToDuplicate.name} (Copy)`,
+          type: lessonToDuplicate.type,
+          content_url: lessonToDuplicate.content_url,
+          content_data: lessonToDuplicate.content_data,
           order_index: lessons.length,
           status: "draft",
         },
@@ -283,10 +235,8 @@ export default function Training() {
 
       toast({
         title: "Success",
-        description: "Lesson added successfully",
+        description: "Lesson duplicated successfully",
       });
-      setIsLessonDialogOpen(false);
-      lessonForm.reset();
       fetchLessons(selectedCourse.id);
     } catch (err: any) {
       toast({
@@ -297,78 +247,32 @@ export default function Training() {
     }
   };
 
-  const handleCloudinaryUpload = (onComplete: (url: string) => void) => {
-    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME?.trim();
-    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET?.trim().replace(/"/g, "");
+  const handleToggleLessonStatus = async (lessonId: string, currentStatus: string) => {
+    const newStatus = currentStatus === "draft" ? "published" : "draft";
 
-    console.log("Cloudinary Config Debug:", {
-      cloudName,
-      uploadPreset,
-      envCloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
-      envPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
-    });
+    try {
+      const { error } = await supabase
+        .from("course_lessons")
+        .update({ status: newStatus })
+        .eq("id", lessonId);
 
-    // DEBUG ALERT REMOVED
+      if (error) throw error;
 
-    if (!cloudName || !uploadPreset) {
+      setLessons(lessons.map((l) => (l.id === lessonId ? { ...l, status: newStatus as "draft" | "published" } : l)));
       toast({
-        title: "Configuration Error",
-        description: "Cloudinary credentials missing in .env",
+        title: "Success",
+        description: `Lesson ${newStatus === "published" ? "published" : "set as draft"} successfully`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message,
         variant: "destructive",
       });
-      return;
     }
-
-    const myWidget = window.cloudinary.createUploadWidget(
-      {
-        cloudName: cloudName,
-        uploadPreset: uploadPreset,
-        sources: ["local", "url", "camera", "google_drive"],
-        multiple: false,
-        resourceType: "auto",
-        clientAllowedFormats: ["mp4", "webm", "mp3", "pdf", "zip", "rar", "7z", "png", "jpg", "jpeg"],
-        maxFileSize: 524288000, // 500MB
-        styles: {
-          palette: {
-            window: "#FFFFFF",
-            windowBorder: "#90A0B3",
-            tabIcon: "#0078FF",
-            menuIcons: "#5A616A",
-            textDark: "#000000",
-            textLight: "#FFFFFF",
-            link: "#0078FF",
-            action: "#FF620C",
-            inactiveTabIcon: "#0E2F5A",
-            error: "#F44235",
-            inProgress: "#0078FF",
-            complete: "#20B832",
-            sourceBg: "#E4EBF1"
-          }
-        }
-      },
-      (error: any, result: any) => {
-        if (!error && result && result.event === "success") {
-          console.log("Done! Here is the image info: ", result.info);
-          onComplete(result.info.secure_url);
-          toast({
-            title: "Upload Successful",
-            description: "File uploaded successfully",
-          });
-        } else if (error) {
-          console.error("Upload error:", error);
-          if (error.statusText !== "abort") {
-            // Optional: handle specific errors
-          }
-        }
-      }
-    );
-
-    myWidget.open();
   };
 
-  const onLessonDelete = async (lessonId: string, lessonName: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent opening the detail dialog
-
+  const onLessonDelete = async (lessonId: string, lessonName: string) => {
     if (!confirm(`Are you sure you want to delete "${lessonName}"?`)) {
       return;
     }
@@ -479,239 +383,19 @@ export default function Training() {
                     {t("training.manageLessons")}
                   </CardDescription>
                 </div>
-                <Dialog
-                  open={isLessonDialogOpen}
-                  onOpenChange={setIsLessonDialogOpen}
-                >
-                  <DialogTrigger asChild>
-                    <Button>
-                      <Plus className="w-4 h-4 mr-2" />
-                      {t("training.addLesson")}
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-h-[90vh] overflow-y-auto">
-                    <DialogHeader>
-                      <DialogTitle>{t("training.newLesson")}</DialogTitle>
-                    </DialogHeader>
-                    <Form {...lessonForm}>
-                      <form
-                        onSubmit={lessonForm.handleSubmit(onLessonSubmit)}
-                        className="space-y-4"
-                      >
-                        <FormField
-                          control={lessonForm.control}
-                          name="name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t("training.lessonName")} *</FormLabel>
-                              <FormControl>
-                                <Input placeholder={t("training.lessonName")} {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-
-                        <FormField
-                          control={lessonForm.control}
-                          name="description"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t("training.description") || "Short Description"}</FormLabel>
-                              <FormControl>
-                                <Textarea
-                                  placeholder="Enter a short description of the lesson..."
-                                  className="resize-none"
-                                  rows={3}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        <FormField
-                          control={lessonForm.control}
-                          name="tags"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t("training.tags") || "Tags"}</FormLabel>
-                              <FormControl>
-                                <Input placeholder="e.g. safety, introduction, basics (comma separated)" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={lessonForm.control}
-                          name="type"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t("training.lessonType")}</FormLabel>
-                              <div className="grid grid-cols-2 gap-3">
-                                {[
-                                  { value: "subchapter", label: t("training.unterkapitel"), icon: FolderOpen },
-                                  { value: "video_audio", label: t("training.videoAudio"), icon: Video },
-                                  { value: "pdf", label: t("training.pdf"), icon: FileText },
-                                  { value: "text", label: t("training.text"), icon: Type },
-                                  { value: "website_link", label: t("training.websiteLink"), icon: Link },
-                                  { value: "zip_file", label: t("training.zipFile"), icon: FileArchive },
-                                ].map((type) => (
-                                  <button
-                                    key={type.value}
-                                    type="button"
-                                    onClick={() => field.onChange(type.value)}
-                                    className={`p-4 rounded-lg border-2 transition-all flex flex-col items-center gap-2 ${field.value === type.value
-                                      ? "border-primary bg-primary/10"
-                                      : "border-border hover:border-primary/50"
-                                      }`}
-                                  >
-                                    <type.icon className="w-6 h-6" />
-                                    <span className="text-sm font-medium">
-                                      {type.label}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-
-                        {/* Conditional content fields based on lesson type */}
-                        {lessonForm.watch("type") !== "subchapter" && (
-                          <>
-                            {lessonForm.watch("type") === "text" ? (
-                              <FormField
-                                control={lessonForm.control}
-                                name="content_text"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <FormLabel>{t("training.textContent")}</FormLabel>
-                                    <FormControl>
-                                      <Textarea
-                                        placeholder={t("training.enterTextContent")}
-                                        {...field}
-                                        rows={5}
-                                      />
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-                            ) : (
-                              <FormField
-                                control={lessonForm.control}
-                                name="content_url"
-                                render={({ field }) => (
-                                  <FormItem>
-                                    <FormLabel>
-                                      {lessonForm.watch("type") === "video_audio" && t("training.videoLink")}
-                                      {lessonForm.watch("type") === "pdf" && t("training.pdfLink")}
-                                      {lessonForm.watch("type") === "website_link" && t("training.websiteLinkUrl")}
-                                      {lessonForm.watch("type") === "zip_file" && t("training.zipFileLink")}
-                                    </FormLabel>
-                                    <FormControl>
-                                      <div className="space-y-3">
-                                        <div className="flex gap-2">
-                                          <Input
-                                            placeholder={
-                                              lessonForm.watch("type") === "video_audio"
-                                                ? "https://youtube.com/... or upload file"
-                                                : lessonForm.watch("type") === "pdf"
-                                                  ? "https://drive.google.com/... or upload file"
-                                                  : lessonForm.watch("type") === "zip_file"
-                                                    ? "https://drive.google.com/... or upload file"
-                                                    : "https://example.com"
-                                            }
-                                            {...field}
-                                            disabled={isUploading}
-                                          />
-                                          {field.value && (
-                                            <Button
-                                              type="button"
-                                              variant="ghost"
-                                              size="icon"
-                                              onClick={() => field.onChange("")}
-                                              title="Remove file/link"
-                                            >
-                                              <XCircle className="h-5 w-5 text-muted-foreground hover:text-destructive" />
-                                            </Button>
-                                          )}
-                                        </div>
-
-                                        {lessonForm.watch("type") === "video_audio" && field.value && (
-                                          <div className="rounded-lg overflow-hidden border bg-black/5 aspect-video flex items-center justify-center">
-                                            {field.value.includes("cloudinary") || field.value.match(/\.(mp4|webm|ogg)$/i) ? (
-                                              <video
-                                                src={field.value}
-                                                controls
-                                                className="w-full h-full object-contain"
-                                              />
-                                            ) : (
-                                              <div className="text-muted-foreground flex flex-col items-center gap-2">
-                                                <Video className="h-8 w-8" />
-                                                <span className="text-sm">Video Preview</span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-
-                                        {["video_audio", "pdf", "zip_file"].includes(lessonForm.watch("type")) && !field.value && (
-                                          <div
-                                            className="rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 hover:bg-muted/50 transition-colors flex flex-col items-center justify-center gap-4 cursor-pointer"
-                                            onClick={() => handleCloudinaryUpload((url) => field.onChange(url))}
-                                          >
-                                            <div className="p-4 rounded-full bg-primary/10 text-primary">
-                                              <Upload className="h-8 w-8" />
-                                            </div>
-                                            <div className="text-center space-y-1">
-                                              <p className="font-medium text-lg">Click to Upload File</p>
-                                              <p className="text-sm text-muted-foreground">
-                                                Supports Video, Audio, PDF, ZIP (Max 100MB)
-                                              </p>
-                                            </div>
-                                            <Button type="button" variant="secondary">
-                                              Open Upload Widget
-                                            </Button>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </FormControl>
-                                    <FormMessage />
-                                  </FormItem>
-                                )}
-                              />
-                            )}
-                          </>
-                        )}
-
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => setIsLessonDialogOpen(false)}
-                          >
-                            {t("training.cancel")}
-                          </Button>
-                          <Button type="submit" disabled={isUploading}>
-                            {isUploading ? (
-                              <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Uploading...
-                              </>
-                            ) : (
-                              t("training.addLesson")
-                            )}
-                          </Button>
-                        </div>
-                      </form>
-                    </Form>
-                  </DialogContent>
-                </Dialog>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate(`/training/${selectedCourse.id}/lesson/new`)}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Lektionen hochladen
+                  </Button>
+                  <Button onClick={() => navigate(`/training/${selectedCourse.id}/lesson/new`)}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    {t("training.addLesson")}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -726,141 +410,22 @@ export default function Training() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {lessons.map((lesson) => (
-                    <div
+                    <LessonCard
                       key={lesson.id}
-                      onClick={() => {
-                        setSelectedLesson(lesson);
-                        setIsLessonDetailOpen(true);
-                      }}
-                      className="p-4 rounded-lg border-2 border-border hover:border-primary/50 transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center">
-                            {getTypeIcon(lesson.type)}
-                          </div>
-                          <div>
-                            <div className="font-semibold">{lesson.name}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {getTypeLabel(lesson.type)}
-                            </div>
-                          </div>
-                        </div>
-                        <Badge variant="secondary">
-                          {lesson.status === "draft" ? t("training.draft") : t("training.published")}
-                        </Badge>
-                        <button
-                          onClick={(e) => onLessonDelete(lesson.id, lesson.name, e)}
-                          className="p-2 rounded-lg bg-destructive/10 hover:bg-destructive hover:text-destructive-foreground text-destructive transition-all opacity-0 group-hover:opacity-100"
-                          title="Delete lesson"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
+                      lesson={lesson}
+                      onDelete={onLessonDelete}
+                      onDuplicate={handleDuplicateLesson}
+                      onToggleStatus={handleToggleLessonStatus}
+                    />
                   ))}
                 </div>
               )}
             </CardContent>
           </Card>
-
-          {/* Lesson Detail Dialog - Enhanced Player */}
-          <Dialog open={isLessonDetailOpen} onOpenChange={setIsLessonDetailOpen}>
-            <DialogContent className="max-w-4xl p-0 overflow-hidden bg-background">
-              {selectedLesson && (
-                <div className="flex flex-col max-h-[90vh] overflow-y-auto">
-
-                  {/* Video Player Section */}
-                  {selectedLesson.type === "video_audio" && selectedLesson.content_url ? (
-                    <div className="w-full bg-black aspect-video relative group">
-                      <video
-                        src={selectedLesson.content_url}
-                        controls
-                        className="w-full h-full object-contain"
-                        autoPlay
-                      >
-                        Your browser does not support the video tag.
-                      </video>
-                    </div>
-                  ) : (
-                    <div className="w-full h-48 bg-muted flex items-center justify-center">
-                      <div className="text-center">
-                        <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-3">
-                          {getTypeIcon(selectedLesson.type)}
-                        </div>
-                        <h3 className="font-semibold text-lg">{selectedLesson.name}</h3>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Content Section */}
-                  <div className="p-6 space-y-6">
-
-                    {/* Header Info */}
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Badge variant="outline" className="text-xs font-normal">
-                          {getTypeLabel(selectedLesson.type)}
-                        </Badge>
-                        {selectedLesson.content_data?.tags && (
-                          <div className="flex gap-1">
-                            {selectedLesson.content_data.tags.split(',').map((tag: string, i: number) => (
-                              <Badge key={i} variant="secondary" className="text-xs font-normal">
-                                {tag.trim()}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <h2 className="text-2xl font-bold">{selectedLesson.name}</h2>
-                    </div>
-
-                    {/* Description */}
-                    {selectedLesson.content_data?.description && (
-                      <div className="prose prose-sm max-w-none text-muted-foreground">
-                        <p>{selectedLesson.content_data.description}</p>
-                      </div>
-                    )}
-
-                    {/* Text Content (if applicable) */}
-                    {selectedLesson.type === "text" && selectedLesson.content_data?.text_content && (
-                      <div className="p-4 bg-muted/50 rounded-lg whitespace-pre-wrap text-sm">
-                        {selectedLesson.content_data.text_content}
-                      </div>
-                    )}
-
-                    {/* Resources / Links */}
-                    {selectedLesson.content_url && selectedLesson.type !== "video_audio" && selectedLesson.type !== "text" && (
-                      <div className="border rounded-lg p-4">
-                        <h4 className="font-medium mb-2 flex items-center gap-2">
-                          <Link className="w-4 h-4" />
-                          Resources
-                        </h4>
-                        <div className="flex items-center justify-between bg-muted/50 p-3 rounded-md">
-                          <span className="text-sm truncate flex-1 mr-4 font-mono text-muted-foreground">
-                            {selectedLesson.content_url}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => window.open(selectedLesson.content_url!, "_blank")}
-                          >
-                            Open Link
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
-                </div>
-              )}
-            </DialogContent>
-          </Dialog>
-
-        </main >
-      </div >
+        </main>
+      </div>
     );
   }
 
